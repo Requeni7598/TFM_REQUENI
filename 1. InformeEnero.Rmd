@@ -1,0 +1,553 @@
+---                              
+title: 'Informe TFM'    
+author: "Luis Requeni Zamora"
+date: "01/01/2023"
+output: 
+   md_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spdep)
+library(tidyr)
+```
+
+
+
+# INTRODUCCIÓN
+
+A raíz del último informe se trabaja en el mismo documento, depurando los distintos modelos planteados anteriormente. Los adaptamos al lenguaje utilizado en asignaturas del Master a traves de *jags* y evitamos así utilizar la función *jags.model* cuya salida era más complicada de interpretar. Seguimos el mismo esquema.
+
+Para ello, hemos tratado de plantear para la matriz de componentes principales estándar asociada al dataset *melanoma* un modelo de mixtura que permita realizar una correcta clasificación de nuestros spots asociados al data.frame.
+
+```{r Introduccion (1), echo=T, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+```
+
+```{r Introduccion (2), echo=T, eval=T}
+datos <- melanoma_int_colData_reducedDims
+head(datos)
+```
+
+Contamos así con un data.frame con 293 observaciones (nuestros 293 spots) y 7 variables. Aunque partiremos directamente con estos datos para la construcción de nuestro modelo, más adelante realizaremos un estudio de como se ha llegado a esa matriz de PCA, tratando de valorar tanto el número de columnas necesarias para explicar una determinada cantidad de información como poder valorar cuales son los genes con una mayor variabilidad y que por tanto resultan más relevantes en esta construcción.
+
+
+
+# CONSTRUCCIÓN DEL MODELO BÁSICO
+
+Inicialmente planteamos un modelo de mixturas únicamente para la primera componente principal para hacernos una ligera idea del objetivo que buscamos. Mostramos la construcción y explicamos los aspectos más relevantes.
+
++ La visualización del *density.plot* de la primera componente principal podría llevarnos a pensar en dos o tres clusterings distintos.
+
+```{r Construccion Modelo (1), echo=T, eval=T}
+y <- datos$PCA.PC1
+```
+
+```{r Construccion Modelo (2), echo=F, eval=T}
+par(mfrow = c(1, 2))
+hist(y, breaks = 20, main = "Histograma", col = "lightblue")
+plot(density(y), main = "Density Plot", col = "red")
+```
+
+Podríamos apostar a que un modelo de mixturas con dos grupos podría representar bien esta situación. Para el primer grupo cabría esperar una media cercana a -10. En el segundo grupo esta debería girar en torno a 5. Más adelante podríamos llegar a valorar la simulación del número de grupos necesarios. Comentar, por último, que parece que debería haber más elementos en el segundo grupo que en el primero.
+
++ A tenor de esto, planteamos el siguiente modelo:
+
+```{r Construccion Modelo (3), echo=T, eval=T}
+Modelo_Ejercicio <- function()
+{
+  for(i in 1:293)
+  {
+    # Para cada simulacion habra dos posibles valores de mu[i]
+    # El que plante mus[1] y el propuesto por mus[2]
+    # Con esta modificacion podemos ver la clasificacion para cada y[i]
+    # En el informe anterior solo veiamos los valores de mus[1] y mus[2]
+    y[i] ~ dnorm(mu[i], prec)
+    mu[i] <- mus[z[i]] 
+    z[i] ~ dcat(omega)
+  }
+  for(k in 1:2)
+  {
+    mus[k] ~ dnorm(0, 1/100)
+  }
+  # Parece que esta distribucion inicial de gamma es adecuada 
+  # Investigar mas porque nos ha generado muchos problemas
+  prec ~ dgamma(0.01, 0.01)
+  sig = sqrt(1/prec)
+  omega ~ ddirich(c(1, 1))
+}
+Datos_Ejercicio <- list(y = y)
+```
+
+```{r Construccion Modelo (4), echo=T, eval=T}
+Iniciales_Ejercicio <- function()
+{
+  list(prec = 1)
+}
+Parametros_Ejercicio <- c("mu", "omega", "mus", "z", "sig")
+```
+
+Asumimos que cada $y_{i}$, $i = 1, \dots, 293$ (el valor registrado para cada uno de nuestros 293 spots en nuestra primera componente principal) sigue una distribución Normal con media $mu[i]$. Tendremos una media $mus[1]$ para el primer *cluster* y una media $mus[2]$ para el segundo. 
+
+En cuanto a la clasificación de los clusters, utilizamos la distribución categórica *dcat()* donde la probabilidad de pertenencia a cada grupo viene determinada por el parámetro *omega*. A este parámetro *omega* le hemos asociado una función de distribución Dirichlet, que para el caso particular con dos categorías es una distribución Beta. De la representación gráfica previa podríamos asumir que existe un mayor número de registros en la segunda categoría que en la primera. No obstante, para no ser informativos optamos por *ddirich(c(1, 1))*.
+
+
+
+# RESULTADOS DEL MÓDELO
+
+```{r Resultados Modelo (1), echo=T, eval=F}
+set.seed(1)
+Resul_Ejercicio <- jags(data = Datos_Ejercicio,
+                        inits = Iniciales_Ejercicio,
+                        parameters.to.save = Parametros_Ejercicio,
+                        model.file = Modelo_Ejercicio,
+                        working.directory = NULL, n.iter = 100000, n.burnin = 10000, n.thin = 10)
+```
+
+```{r Resultados Modelo (2), echo=F, eval=T}
+load("Modelo1.rda")
+```
+
+En este sentido, podemos comprobar si la construcción del modelo ha sido la adecuada, las distintas clasificaciones que se proponen para nuestros spots, así como las características de nuestros dos clusters propuestos.
+
++ Resumen del modelo:
+
+```{r Resultados Modelo (3), echo=T, eval=T}
+Resultados <- Resul_Ejercicio$BUGSoutput
+head(Resultados$summary)
+summary((Resultados$summary[, 8])) # Informacion R-hat
+summary((Resultados$summary[, 9])) # Informacion simulaciones efectivas
+```
+
+La construcción del modelo tanto en relación al número efectivo de simulaciones como con el *R-hat* es adecuada.
+
++ Clasificación
+
+Por un lado estamos interesados en conocer cual es la media para cada cluster, pero igualmente queremos conocer cuantas observaciones pertenecen a cada cluster así como valorar la clasificación que se ha realizado para alguna observación concreta.
+
+```{r Resultados Modelo (4), echo=T, eval=T}
+# Informacion mus
+par(mfrow = c(1, 2))
+plot(density(Resultados$sims.list$mus[, 1]), main = "Density Plot", col = "red")
+plot(density(Resultados$sims.list$mus[, 2]), main = "Density Plot", col = "red")
+summary(Resultados$sims.list$mus[, 1])
+summary(Resultados$sims.list$mus[, 2])
+
+
+# Informacion omega
+par(mfrow = c(1, 2))
+plot(density(Resultados$sims.list$omega[, 1]), main = "Density Plot", col = "red")
+plot(density(Resultados$sims.list$omega[, 2]), main = "Density Plot", col = "red")
+summary(Resultados$sims.list$omega[, 1])
+summary(Resultados$sims.list$omega[, 2])
+```
+
+Nos llama la atención que nuestro modelo apunta a que existen más elementos en el primer cluster que en el segundo, cuando viendo las representaciones iniciales quizá hubieramos apostado por lo contrario. Las medias para los clusters 1 y 2 se aproximan bastante a lo que cabría esperar pero parece que existe cierto margen de mejora.
+
+Para valorar la clasificación de nuestros distintos elementos $y_{i}$, hemos cogido 5 elementos. Dos de ellos claramente pertenecientes a los grupos 1 y 2 respectivamente ($y_{132}$ y $y_{272}$). Y luego tres elementos que generan más dudas ($y_{29}$ ligeramente orientado hacia el cluster 1, $y_{45}$ totalmente arbitrario y $y_{98}$ más próximo al cluster 2)
+
+```{r Resultados Modelo (5), echo=T, eval=T}
+par(mfrow = c(1, 2))
+plot(density(Resultados$sims.list$mu[, 132]), main = "Clasifación y132", col = "blue")
+plot(density(Resultados$sims.list$mu[, 272]), main = "Clasifación y272", col = "blue")
+summary(Resultados$sims.list$mu[, 132])
+summary(Resultados$sims.list$mu[, 272])
+
+par(mfrow = c(1, 3))
+plot(density(Resultados$sims.list$mu[, 29]), main = "Clasifación y29", col = "blue")
+plot(density(Resultados$sims.list$mu[, 45]), main = "Clasifación y45", col = "blue")
+plot(density(Resultados$sims.list$mu[, 98]), main = "Clasifación y98", col = "blue")
+summary(Resultados$sims.list$mu[, 29])
+summary(Resultados$sims.list$mu[, 45])
+summary(Resultados$sims.list$mu[, 98])
+```
+
+Todas las representaciones parecen ir en consonancia con lo comentado.
+
+Por último tratamos de solucionar los distintos problemas de *label.switching*. No parece que se produzcan en este modelo vistas las distintas representaciones gráficas, pero es posible que cuando aumente la dimensionalidad, y sea más difícil de visualizar la correcta o no clasificación, sí que se produzcan. Hacemos uso para ello de la función *label.switching()* del paquete que lleva su mismo nombre.
+
+\newpage
+
+El problema de *label.swiching* surge como consecuencia de la inferencia a posteriori en el modelo de mixtura que imposibilita evaluar significativamente las estadísticas a posteriori utilizando los procedimientos estándar de Monte Carlo. Este problema surge como consecuencia de la invariancia a posteriori bajo las acciones de un determinado grupo. Por ejemplo, permutar el orden de los componentes de la mixtura no tiene efecto sobre la probabilidad.
+
+Entre los distintos algoritmos que ofrece el paquete utilizamos la segunda versión iterativa de la Equivalencia de Clases Representantivas (*erc.iterative.2()*) propuesta por Papastamoulis y Iliopoulos (2010). Este modelo presecisa de un array de dimensión $m \times n \times k$ de probrabilidades de asignación para cada uno de las 293 localizaciones ($n$) en cada una de nuestras 27.000 iteraciones ($m$) y para cada uno de los 2 clusters propuestos ($k$).
+
+Dado que esa información no es proporcionada por la propia MCMC, debemos construirla nosotros.
+
+Para una determinada iteración $t = 1, \dots, 27000$ de MCMC, sea $w_{k}^{(t)}$ y $\zeta_{k}^{(t)}$, $k = 1, 2$, los pesos simulados para cada una de las mixturas y los parámetros de las componentes específicas respectivamente. De esta manera, el elemento $(t, i, k)$ para $p$ se corresponde con la probabilidad condicionada de que la observación $i = 1, \dots 293$ pertenezca a la mixtura k. 
+
+$$
+p_{itk} = \frac{w_{k}^{(t)}f(x_{i}|\zeta_{k}^{(t)})}
+               {w_{1}^{(t)}f(x_{i}|\zeta_{1}^{(t)}) + w_{2}^{(t)}f(x_{i}|\zeta_{2}^{(t)})}
+$$
+
+```{r Resultados Modelo (6), echo=T, eval=F}
+m <- Resultados$n.sims
+n <- nrow(datos)
+K <- 2
+z <- Resultados$sims.list$z
+weights <- Resultados$sims.list$omega
+zheta <- Resultados$sims.list$mus
+sigma <- Resultados$sims.list$sig
+
+p <- array(dim = c(m, n, K))
+for(i in 1:m){
+  print(i)
+  for(j in 1:n){
+    for(k in 1:K){
+      p[i, j, k] <- (weights[i, k]*dnorm(y[j], mean = zheta[i, k], sd = sigma[i])) / 
+                    ((weights[i, 1]*dnorm(y[j], mean = zheta[i, 1], sd = sigma[i])) + 
+                     (weights[i, 2]*dnorm(y[j], mean = zheta[i, 2], sd = sigma[i])))
+    }
+  }
+}
+ResultadosLS1 <- label.switching::label.switching(z = z, K = 2, p = p, method = "ECR-ITERATIVE-2")
+```
+
+```{r Resultados Modelo (7), echo=F, eval=T}
+load("ResultadosLS1.rda")
+```
+
+```{r Resultados Modelo (8), echo=T, eval=T}
+clasif1 <- Resultados$mean$z
+clasif1 <- as.numeric(round(clasif1, 0)) # Clasificacion propuesta por nuestro metodo
+clasif2 <- as.numeric(ResultadosLS$clusters)   # Clasificacion una vez realizado el label.switching
+Comparacion <- as.data.frame(cbind(clasif1, clasif2))
+Comparacion$DIF <- Comparacion$clasif1 - Comparacion$clasif2
+sum(Comparacion$DIF)
+```
+
+Comparando la clasificación previa y la realizada tras solventar el *label.switching* podemos apreciar que no existían diferencias en la clasificación propuesta y que, aunque en este caso no era necesario, el *label switching* funciona correctamente. 
+
+\newpage
+
+
+
+# ANÁLISIS MULTIVARIANTE
+
+Extrapolamos la construcción sencilla realizada para el caso univariante al caso multivariante. En este caso ya no dispondremos de un criterio visual para determinar a que grupo pertenece una determinada observación. Igualmente, plantearemos una clusterización en tres grupos atendiendo a la propuesta de Zhao 2021 para este mismo dataset.
+
+```{r Analisis Multivariante (1), echo=T, eval=T}
+y <- datos
+apply(datos, 2, mean)
+```
+
+Hemos observado que la media por columnas de nuestra matriz de componentes principales es cero. ¿Tiene alguna relevancia esto en nuestro estudio?
+
+```{r Analisis Multivariante (2), echo=T, eval=T}
+Modelo_Ejercicio2 <- function()
+{
+  for(i in 1:293)
+  {
+    # y[i, 1:7] recoge el valor para cada uno de las 293 localizaciones y 7 CP
+    # Asumiremos una distribucion normal multivariante
+    # mu[i, ] es el vector de medias para cada localizacion i
+    # El valor de mu[i, ] vendrá determinado por mus[, 1], mus[, 2] o mus[, 3] en funcion del cluster
+    # Seguimos trabajando como en el caso univariante para la distribucion de z
+    y[i, 1:7] ~ dmnorm(mu[i, ], tau[, , z[i]])
+    mu[i, 1:7] <- mus[, z[i]]
+    z[i] ~ dcat(omega[])
+  }
+  for (h in 1:3) 
+  {
+    # La distribución Wishart es idonea para estimadores de varianza, como en este caso tau
+    # Sus parametros recogen la matriz de varianzas y los grados de libertad
+    # En un principio era suficiente con indicar 7 grados de libertad
+    mus[1:7, h] ~ dmnorm(rep(0, 7), tau[, , h]) 
+    tau[1:7, 1:7, h] ~ dwish(a, 8)
+  }
+  omega ~ ddirich(c(1, 1, 1))
+}
+Datos_Ejercicio2 = list(y = y, a = diag(1, 7)) 
+```
+
+```{r Analisis Multivariante (3), echo=F, eval=T}
+Iniciales_Ejercicio2 <- function()
+{
+  list(prec = 1)
+}
+Parametros_Ejercicio2 <- c("mu", "omega", "mus", "z", "tau")
+```
+
+
+```{r Analisis Multivariante (4), echo=T, eval=F}
+set.seed(1)
+Resul_Ejercicio2 <- jags(data = Datos_Ejercicio2,
+                         inits = Iniciales_Ejercicio2,
+                         parameters.to.save = Parametros_Ejercicio2,
+                         model.file = Modelo_Ejercicio2,
+                         working.directory = NULL, n.iter = 10000, n.burnin = 1000, n.thin = 10)
+```
+
+```{r Analisis Multivariante (5), echo=F, eval=T}
+load("Modelo2.rda")
+```
+
+```{r Analisis Multivariante (6), echo=T, eval=T}
+Resultados2 <- Resul_Ejercicio2$BUGSoutput
+head(Resultados2$summary)
+summary((Resultados2$summary[, 8])) # Informacion R-hat
+summary((Resultados2$summary[, 9])) # Informacion simulaciones efectivas
+```
+
+Tenemos problemas en este modelo con el *R-hat* y con el número efectivo de simulaciones. ¿Cómo podemos solucionar esto? En el fichero *Modelo2.rda* que utilizamos aquí hemos realizado 10.000 iteraciones. Planteamos también 100.000 iteraciones (*Modelo Extra.rda*) pero la mejora fue prácticamente inexistente, uniendo a ello un tiempo de compilación de casi una hora (que se alarga a aproximadamente 8 horas con el bucle que plantearíamos a continuación).
+
+Obviamos temporalmente este problema para poder proseguir en la valoración del modelo construido. Abordamos, como previamente, el problema de *label.switching*
+
+\newpage
+
+```{r Analisis Multivariante (7), echo=T, eval=F}
+m <- Resultados2$n.sims
+n <- nrow(datos)
+K <- 3
+z <- Resultados2$sims.list$z
+weights <- Resultados2$sims.list$omega
+zheta <- Resultados2$sims.list$mus
+sigma <- Resultados2$sims.list$tau
+
+p <- array(dim = c(m, n, K))
+for(i in 1:m){
+  print(i)
+  for(j in 1:n){
+    for(k in 1:K){
+      p[i, j, k] <- (weights[i, k]*dmvnorm(y[j, ], mean = zheta[i, , k], sigma = sigma[i, , , k])) / 
+                    ((weights[i, 1]*dmvnorm(y[j, ], mean = zheta[i, , 1], sigma = sigma[i, , , 1])) + 
+                     (weights[i, 2]*dmvnorm(y[j, ], mean = zheta[i, , 2], sigma = sigma[i, , , 2])) +
+                     (weights[i, 3]*dmvnorm(y[j, ], mean = zheta[i, , 3], sigma = sigma[i, , , 3])))
+    }
+  }
+}
+ResultadosLS2 <- label.switching::label.switching(z = z, K = 3, p = p, method = "ECR-ITERATIVE-2")
+```
+
+```{r Analisis Multivariante (8), echo=F, eval=T}
+load("ResultadosLS2.rda")
+```
+
+```{r Analisis Multivariante (9), echo=T, eval=T}
+clasif1 <- Resultados2$mean$z
+clasif1 <- as.numeric(round(clasif1, 0)) # Clasificacion propuesta por nuestro metodo
+clasif2 <- as.numeric(ResultadosLS2$clusters)   # Clasificacion una vez realizado el label.switching
+Comparacion <- as.data.frame(cbind(clasif1, clasif2))
+Comparacion$DIF <- Comparacion$clasif1 - Comparacion$clasif2
+sum(Comparacion$DIF)
+```
+
+En este caso si que existen diferencias que apuntarían a la necesidad del *label.swiching*. El tiempo de ejecución del bucle para un total de 2700 iteraciones es de aproximadamente 45 minutos. Guardamos los resultados en *ResultadosLS2.rda*. Aprovechamos y guardamos igualmente el primer caso, *ResultadosLS1.rda*.
+
+Llegados a este punto, la clave consistiría en comparar la clasificación propuesta por nuestro modelo con la clasificación que se propone en Zhao 2021 así como con otras técnicas que se mencionan en este mismo artículo.
+
+```{r Analisis Multivariante (10), echo=T, eval=T, fig.height=3.5, fig.width=4, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao)
+ClasificacionMelanomaZhao$spatial.cluster <- as.numeric(ResultadosLS2$clusters)
+clusterPlot(ClasificacionMelanomaZhao)
+```
+
+Vemos que existen diferencias significativas entre las dos clasificaciones propuestas. Este debe ser el punto de partida de nuestras nuevas mejoras y en particular de la aplicación de la estadística espacial.
+
+
+
+# CONCLUSIONES
+
+Dos de los aspectos últimos que hemos trabajado se han centrado en conseguir la matriz original de recuentos para cada gen y para cada spot y plantear el último modelo aquí descrito a través de otra alternativa como podría ser Nimble.
+
+
+
++ **Matriz Original**
+
+En *BayesSpace (Luis).Rmd* hemos realizado un código para obtener la matriz original de recuentos que no venía proporcionada en el dataset original.
+
+```{r Conclusiones ACP (1), echo=T, eval=T}
+load("MelanomaZhao.rda")
+```
+
+Esto nos podría permitir intentar construir nuestro modelo final con este dataset (valorando por ejemplo lo expuesto en Zhao 2022 para el excesivo número de recuentors iguales a 0) o tratar de desarrollar un análises de componentes principales propio y no utilizar el directamente proporcionado por el artículo. Así, igualmente, conoceríamos también la cantidad de componentes principales necesarias para explicar una determinada cantidad de información o saber cuales de estos podrían presentar una mayor variabilidad.
+
+No obstante, la realización del ACP no ha sido muy satisfactoria. El ampliamente mayor número de variables que de observaciones impide la utilización de la función *princomp()*. Igualmente, la función *principal()* de la librería *psych* tampoco parece funcionar (sin resultados después de media hora compilando tras solicitar solamente una componente).
+
+```{r Conclusiones ACP (2), echo=T, eval=F}
+ACP <- princomp(datos)
+ACP <- psych::principal(datos, nfactors = 1)
+```
+
+Hemos encontrado una alternativa en la función *nipals()* del paquete *chenometrics*. No muestra la proporción de cantidad explicada pero sí devuelve mediante una serie de iteraciones la PCA que buscamos así como el peso de los distintos genes. Replicamos nuestro modelo final con esta nueva PCA. Habría que valorar sí merece la pena hacer hincapié en esta idea.
+
+```{r Conclusiones ACP (3), echo=T, eval=T, warning=F, results='hide'}
+ACP <- nipals(datos, a = 7)
+y <- as.data.frame(ACP$T)
+```
+
+\newpage
+
+```{r Conclusiones ACP (4), echo=T, eval=F}
+Modelo_Ejercicio3 <- function()
+{
+  for(i in 1:293)
+  {
+    # y[i, 1:7] recoge el valor para cada uno de las 293 localizaciones y 7 CP
+    # Asumiremos una distribucion normal multivariante
+    # mu[i, ] es el vector de medias para cada localizacion i
+    # El valor de mu[i, ] vendrá determinado por mus[, 1], mus[, 2] o mus[, 3] en funcion del cluster
+    # Seguimos trabajando como en el caso univariante para la distribucion de z
+    y[i, 1:7] ~ dmnorm(mu[i, ], tau[, , z[i]])
+    mu[i, 1:7] <- mus[, z[i]]
+    z[i] ~ dcat(omega[])
+  }
+  for (h in 1:3) 
+  {
+    # La distribución Wishart es idonea para estimadores de varianza, como en este caso tau
+    # Sus parametros recogen la matriz de varianzas y los grados de libertad
+    # En un principio era suficiente con indicar 7 grados de libertad
+    mus[1:7, h] ~ dmnorm(rep(0, 7), tau[, , h]) 
+    tau[1:7, 1:7, h] ~ dwish(a, 8)
+  }
+  omega ~ ddirich(c(1, 1, 1))
+}
+Datos_Ejercicio3 = list(y = y, a = diag(1, 7)) 
+```
+
+```{r Conclusiones ACP (5), echo=F, eval=T}
+Iniciales_Ejercicio3 <- function()
+{
+  list(prec = 1)
+}
+Parametros_Ejercicio3 <- c("mu", "omega", "mus", "z", "tau")
+```
+
+```{r Conclusiones ACP (6), echo=T, eval=F}
+set.seed(1)
+Resul_Ejercicio3 <- jags(data = Datos_Ejercicio3,
+                         inits = Iniciales_Ejercicio3,
+                         parameters.to.save = Parametros_Ejercicio3,
+                         model.file = Modelo_Ejercicio3,
+                         working.directory = NULL, n.iter = 10000, n.burnin = 1000, n.thin = 10)
+```
+
+```{r Conclusiones ACP (7), echo=F, eval=T}
+load("Modelo3.rda")
+```
+
+```{r Conclusiones ACP (8), echo=T, eval=T}
+Resultados3 <- Resul_Ejercicio3$BUGSoutput
+head(Resultados3$summary)
+summary((Resultados3$summary[, 8])) # Informacion R-hat
+summary((Resultados3$summary[, 9])) # Informacion simulaciones efectivas
+```
+
+Merece la pena comentar que aunque todavía existen algunas problemas con el *Rhat* y el número de simulaciones efectivas, estos son mucho menores que los obtenidos con la PCA proporcionada originalmente. No obstante, la clasificación obtenida (sin pasar el label.swiching) es deplorable.
+
+```{r Conclusiones ACP (9), echo=T, eval=T, fig.height=3.5, fig.width=4, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+Clasificacion <- round(Resultados3$mean$z, 0)
+ClasificacionMelanomaZhao$spatial.cluster <- as.numeric(Clasificacion)
+clusterPlot(ClasificacionMelanomaZhao)
+```
+
+\newpage
+
+
+
++ **Utilización de Nimble**
+
+```{r Conclusiones Nimble (1), echo=F, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+datos <- melanoma_int_colData_reducedDims
+y <- datos
+```
+
+```{r Conclusiones Nimble (2), echo=T, eval=T}
+Modelo_EjercicioN <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    # y[i, 1:7] recoge el valor para cada uno de las 293 localizaciones y 7 CP
+    # Asumiremos una distribucion normal multivariante
+    # mu[i, ] es el vector de medias para cada localizacion i
+    # El valor de mu[i, ] vendrá determinado por mus[, 1], mus[, 2] o mus[, 3] en funcion del cluster
+    # Seguimos trabajando como en el caso univariante para la distribucion de z
+    y[i, 1:7] ~ dmnorm(mu[i], tau[1:7, 1:7, z[i]])
+    mu[i] <- mus[1:7, z[i]]
+    z[i] ~ dcat(omega[1:3])
+  }
+  for (h in 1:3) 
+  {
+    # La distribución Wishart es idonea para estimadores de varianza, como en este caso tau
+    # Sus parametros recogen la matriz de varianzas y los grados de libertad
+    # En un principio era suficiente con indicar 7 grados de libertad
+    mus[1:7, h] ~ dmnorm(b, tau[1:7, 1:7, h]) 
+    tau[1:7, 1:7, h] ~ dwish(a, 8)
+  }
+  omega[1:3] ~ ddirich(1)
+}
+)
+
+Datos_EjercicioN = list(y = y, a = 1) 
+
+Iniciales_EjercicioN <- function()
+{
+  list(prec = 1)
+}
+
+Parametros_EjercicioN <- c("mu", "omega", "mus", "z", "tau")
+```
+
+```{r Conclusiones Nimble (3), echo=T, eval=F}
+set.seed(1)
+Resul_EjercicioN <- nimbleMCMC(Modelo_EjercicioN, data = list(y = y, a = 1, b = 0), 
+                               inits = Iniciales_EjercicioN,
+                               monitors = Parametros_EjercicioN, 
+                               thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                               summary = TRUE, WAIC = TRUE)
+```
+
+El paso de *jags* a *nimble* nos ha generado bastantes problemas de nomenclatura. Hemos ido solucionando muchos de ellos, y aunque la definición del modelo actual es correcta según *nimbleMCMC*, luego genera problemas a la hora de la construcción.
+
+Seguimos igualmente estos días tratando de solucionar el problema y una vez obtenido el modelo tratar de aplicar la componente espacial necesaria para mejorar los resultados.
+
+\newpage
+
+
+
+# BIBLIOGRAFÍA
+
+[Modelos de Mixturas en Frecuentista](https://rpubs.com/arquez9512/mixture-models)
+
+[Modelos de Mixturas en Bayesiano](https://www.coursera.org/lecture/mcmc-bayesian-statistics/mixture-model-in-jags-KDEVZ)
+
+[Finite Mixture Models](https://www.jarad.me/courses/stat615/slides/Nonparametrics/finiteMixtures.pdf)
+
+[Distribucion Dirichlet](https://mmeredith.net/blog/2021/Dirichlet_priors.htm)
+
+[Distribucion Normal Multivariante](http://verso.mat.uam.es/~joser.berrendero/cursos/Matematicas-e2/e2-tema1-16.pdf)
+
+[Label Switching, Stephens (2000)](https://stephenslab.uchicago.edu/assets/papers/Stephens2000b.pdf)
+
+[Label Switching, Papastamoulis (2015)](https://arxiv.org/pdf/1503.02271.pdf)
+
+[Analisis Componentes Principales](https://www.researchgate.net/post/How_can_I_do_Factor_Analysis_PCA_with_more_variables_than_observations_in_R)
+
+[Manual Nimble](https://r-nimble.org/manuals/NimbleUserManual_0.5.pdf)
+
+
