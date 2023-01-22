@@ -1,0 +1,259 @@
+---                                      
+title: 'Informe TFM'    
+author: "Luis Requeni Zamora"
+date: "01/01/2023"
+output: 
+   md_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spdep)
+library(tidyr)
+```
+
+
+
+# INTRODUCCIÓN
+
+En el informe *1. Informe Enero.Rmd* se abordó el caso multivariante para la clusterización de nuestra matriz de componentes principales de nuestros 293 spots con información relativa al melanoma. Uno de los problemas principales que encontramos en el modelo formulado en *jags* fueron los altos valores obtenidos para el *R-hat* así como el bajo número efectivo de simulaciones.
+
+Estos pudieron ser debidos a la formulación en el modelo de una precisión distinta según el cluster de pertenencia. Al realizar el traspaso a *nimble* esto también generaba problemas así que hemos decidido eliminar tal distinción, que tampoco aparecía en el artículo de Zhao. A continuación se presentan el modelo construido a traves de *nimble* como punto de partida para nuestro análisis espacial. Merece la pena no olvidar en cualquier caso tres ideas principales que hemos trabajado previamente:
+
++ El problema de *label.switching*.
+
++ La construcción de nuestra propia matriz de componentes principales
+
++ El trabajo directo con la matriz recuentos construida en *MelanomaZhao.rda*
+
+\newpage
+
+
+
+# NIMBLE
+
+```{r Conclusiones Nimble (1), echo=F, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+datos <- melanoma_int_colData_reducedDims
+y <- datos
+```
+
+```{r Nimble (1), echo=T, eval=T}
+Modelo_EjercicioN <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    # y[i, 1:7] recoge el valor para cada uno de las 293 localizaciones y 7 CP
+    # Asumiremos una distribucion normal multivariante
+    # mu[i] es el vector de medias para cada localizacion i
+    # El valor de mu[i] vendrá determinado por mus[, 1], mus[, 2] o mus[, 3] en funcion del cluster
+    # Seguimos trabajando como en el caso univariante para la distribucion de z
+    # COMENTAR ALVARO (1)
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:3])
+    # Planteamos el trabajo con la precisión como se plantea en Zhao (2021)
+  }
+  omega[1:3] ~ ddirich(dirch_alpha[1:3])
+  for (h in 1:3) 
+  {
+    # La distribución Wishart es idonea para estimadores de varianza, como en este caso tau
+    # Sus parametros recogen la matriz de varianzas y los grados de libertad
+    # En un principio era suficiente con indicar 7 grados de libertad (hacemos 7 + 1)
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3), 293, replace = T) # Iniciamos aleatoriamente el cluster inicial
+# COMENTAR ALVARO (2)
+Iniciales_EjercicioN <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*3), ncol = 3),
+       omega = c(1/3, 1/3, 1/3),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioN <- c("omega", "mus", "z", "tau", "w")
+```
+
+\newpage
+
+```{r Nimble (2), echo=T, eval=F}
+set.seed(1)
+nimbleOptions(showCompilerOutput = F)
+Resul_EjercicioN <- nimbleMCMC(Modelo_EjercicioN, data = list(y = y), 
+                               constants = list(mu_0 = rep(0, 7),
+                                                wish_V=diag(1, 7),
+                                                dirch_alpha = c(1, 1, 1),
+                                                tau_0 = diag(0.01, 7)),
+                               inits = Iniciales_EjercicioN,
+                               monitors = Parametros_EjercicioN, 
+                               thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                               summary = TRUE, WAIC = TRUE)
+```
+
+En el modelo construido, cada $y_{i}$, $i = 1, \dots, 293$ representa un vector de longitud 7 (por las 7 componentes principales con las que trabajamos). De esta manera diremos, por ejemplo, que $y_{135}$ es un vector de longitud 7 que recoge el valor de las 7 componentes principales para el spot 135. A partir de esto, decimos que:
+
+$$
+y_{i} \sim N_{n}(\mu_{h}, (w_{i}\Lambda)^{-1})
+$$
+La media de cada observación $\mu_{h}$ será distinta en función de la clasificación en el cluster $h = 1, 2, 3$ pero identica para los spots pertenecientes al mismo cluster. Igual que en la definición del parámetro $y_{i}$, $\mu_{h}$ tendrá longitud 7 recogiendo la media para cada una de las 7 componentes principales. 
+
+Por su parte, $(w_{i}\Lambda)^{-1}$ representa la desviación (recordar que trabajaremos con la precisión en la formulación de nuestro modelo). La matriz de covarianzas $\Lambda$ de los elementos de $y$ será la misma para todas las observaciones con independencia de su cluster.
+
+Trabajar con una matriz de covarianzas distinta para cluster suponía incrementar rapidamente el numero de parametros desconocidos, lo que puede explicar los problemas de convergencia en el informe anterior. Para aportar cierta variabilidad entre las observaciones, utilizamos para ello un factor de escala $w_{i}$.
+
++ **INFORMACIÓN MODELO**
+
+```{r Nimble Informacion Modelo (1), echo=F, eval=T}
+load("ModeloNimble1.rda")
+```
+
+La salida del modelo de *nimble* nos proporciona tres tipos de información.
+
+En primer lugar tenemos los valores recogidos para nuestras 659 variables de estudio:
+
++ 21 valores medios para cada una de nuestras 7 componentes principales y 3 posibles clusters (mus).
+
++ 49 valores medios para cada una de las componentes de nuestra matriz de covarianzas (tau).
+
++ 293 valores posibles para cada factor de escala (w).
+
++ 293 valores recogiendo el cluster al que pertenece cada observacion (z)
+
++ 3 valores con la probabilidad de pertenencia a cada cluster en cada iteración (omega).
+
+Contamos con un total de 1600 iteraciones (niter - nburnin) / nthin.
+
+```{r Nimble Informacion Modelo (2), echo=T, eval=T}
+dim(Resul_EjercicioN$samples)
+```
+
+Igualmente, contamos con los valores medios y medianos para cada una de estas 708 variables así como la desviación típica y un intervalo de credibilidad al $95\%$
+
+```{r Nimble Informacion Modelo (3), echo=T, eval=T}
+head(Resul_EjercicioN$summary)
+```
+
+Por último se recoge el *WAIC* (Watanabe Akaike Information Criterium) que será útil para poder comparar nuestro modelo con otros ya construidos por la comunidad científica.
+
+```{r Nimble Informacion Modelo (4), echo=T, eval=T}
+Resul_EjercicioN$WAIC
+```
+
+**Cosas a comentar en esta línea. El modelo aquí formulado consta tan solo de una cadena. ¿Habría quizá que proponer trabajar con más cadenas o comprobar la convergencia entre todas ellas?. Siguiendo esto, ¿explicamos el WAIC y la fórmula que hay detrás o damos por irrelevante esta parte?**
+
++ **COMPROBACIÓN MODELO**
+
+A diferencia de *jags* o *winbugs*, *nimble* no recoge información relativa al número efectivo de simulaciones ni tampoco al *Rhat*, dos criterios imprescindibles para comprobar la buena convergencia del modelo. Hemos utilizado el paquete *rstan* que sí permite calcular estos dos indicadores a partir de la propia cadena de Markov.
+
+```{r Nimble Comprobacion Modelo (1), echo=T, eval=T}
+MCMC <- Resul_EjercicioN$samples
+Rhat <- c()
+for (i in 1:ncol(MCMC)){
+  Rhat <- c(Rhat, Rhat(MCMC[, i]))
+}
+summary(Rhat)
+```
+
+Los valores del *Rhat* son muy positivos. Si bien existe 113 valores nulos para el *Rhat*. Todos ellos están asociados a la variable $z$ que recoge la clusterización y puedan ser debidos quizá a su caracter discreto.
+
+```{r Nimble Comprobacion Modelo (2), echo=T, eval=T}
+MCMC <- Resul_EjercicioN$samples
+Nes <- c()
+for (i in 1:ncol(MCMC)){
+  Nes <- c(Nes, ess_bulk(MCMC[, i]))
+}
+summary(Nes)
+```
+
+Podría ser mejor quizá para algunos casos concretos pero en cualquier caso el número efectivo de simulaciones es muy respeteable, surgiendo el mismo problema con los valores nulos.
+
+**Siguiendo lo visto en el apartado anterior habrá que valorar si utilizar estas funcionas o calcular nosotros mismos estos indicadores dando ejemplo de comprensión del modelo. Nos llama la atención que en el algunos casos el número efectivo de simulaciones es superior al de iteraciones realizadas. Quizá no es la mejor opción el paquete que estamos usando.**
+
++ **CLASIFICACION MODELO**
+
+Comparamos por último nuestra clasificación obtenida con la que se realiza en Zhao (2021). Posteriormente deberemos comparar también con otros métodos bayesianos propuestos en Zhao (2021). Solucionamos primeramente los problemas de *label.swiching*.
+
+```{r Nimble Clasificacion Modelo (1), echo=T, eval=F}
+m <- nrow(Resul_EjercicioN$samples)
+n <- nrow(datos)
+K <- 3
+z <- Resul_EjercicioN$samples[, 367:659]
+weights <- Resul_EjercicioN$samples[, 22:24]
+zheta <- Resul_EjercicioN$samples[, 1:21]
+# COMENTAR ALVARO
+sigma1 <- Resul_EjercicioN$samples[, 25:73]
+sigma2 <- Resul_EjercicioN$samples[, 74:366]
+prec_list <- list()
+for(i in 1:n){
+  print(i)
+  prec <- c()
+  for(j in 1:m){
+      prec <- rbind(prec, sigma2[j, i]*sigma1[j, ])  
+  }
+  prec_list[[i]] <- prec
+}
+
+
+p <- array(dim = c(m, n, K))
+for(i in 1:m){
+  print(i)
+  for(j in 1:n){
+    for(k in 1:K){
+      p[i, j, k] <- (weights[i, k]*dmvnorm(y[j, ], mean = zheta[i, (7*(k-1)):(7*k)], sigma = prec_list[[j]][i,])) / 
+                    ((weights[i, 1]*dmvnorm(y[j, ], mean = zheta[i, 1:7], sigma = prec_list[[j]][i,])) + 
+                     (weights[i, 2]*dmvnorm(y[j, ], mean = zheta[i, 8:14], sigma = prec_list[[j]][i,])) +
+                     (weights[i, 3]*dmvnorm(y[j, ], mean = zheta[i, 15:21], sigma = prec_list[[j]][i,])))
+    }
+  }
+}
+ResultadosLS2 <- label.switching::label.switching(z = z, K = 3, p = p, method = "ECR-ITERATIVE-2")
+```
+
+```{r Nimble Clasificacion Modelo (2), echo=T, eval=T, fig.height=3, fig.width=3, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "green", "blue"))
+ClasificacionMelanomaZhao$spatial.cluster <- as.numeric(Resul_EjercicioN$summary[367:659, 2])
+clusterPlot(ClasificacionMelanomaZhao, palette = c("green", "blue", "red"))
+```
+
+\newpage
+
+
+
+# BIBLIOGRAFÍA
+
+[Comparacion Modelos](https://rpubs.com/jcsosam/855023)
+
+[Modelo Bayesiano Espacial](https://revistas.ucr.ac.cr/index.php/intersedes/article/download/41848/42255?inline=1)
+
+[Rhat Rstan](https://mc-stan.org/rstan/reference/Rhat.html)
+
+
