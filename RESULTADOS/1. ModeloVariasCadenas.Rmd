@@ -1,0 +1,210 @@
+---                                              
+title: 'Modelo Varias Cadenas'    
+author: "Luis Requeni Zamora"
+date: "01/02/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spdep)
+library(tidyr)
+```
+
+En este script se trata de formular el modelo final propuesto en *2. InformeEnero (2)*, y que ofrecía ya resultados satisfactorios, utilizando 3 cadenas y analizando gráficamente su convergencia, así como a través del número efectivo de simulaciones y el *Rhat*.
+
+
+
+# MODELO NIMBLE (3 CADENAS - 4 CLUSTERS)
+
+```{r, echo=F, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+datos <- melanoma_int_colData_reducedDims
+y <- datos
+```
+
+```{r Nimble (1), echo=T, eval=T}
+Modelo_EjercicioN <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+    # PLANTEAR LA ESTADISTICA ESPACIAL DESDE LA PERSPECTIVA MULTINOMIAL
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+Iniciales_EjercicioN <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioN <- c("omega", "mus", "z", "tau", "w")
+```
+
+```{r Nimble (2), echo=T, eval=F}
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleFinal <- nimbleMCMC(Modelo_EjercicioN, data = list(y = y), 
+                                constants = list(mu_0 = rep(0, 7),
+                                                 wish_V=diag(1, 7),
+                                                 dirch_alpha = c(1, 1, 1, 1),
+                                                 tau_0 = diag(0.01, 7)),
+                                inits = Iniciales_EjercicioN,
+                                monitors = Parametros_EjercicioN, 
+                                thin = 10, niter = 20000, nburnin = 4000, nchains = 3, 
+                                summary = TRUE, WAIC = TRUE)
+ModeloNimbleFinal2 <- nimbleMCMC(Modelo_EjercicioN, data = list(y = y), 
+                                 constants = list(mu_0 = rep(0, 7),
+                                                  wish_V=diag(1, 7),
+                                                  dirch_alpha = c(1, 1, 1, 1),
+                                                  tau_0 = diag(0.01, 7)),
+                                 inits = Iniciales_EjercicioN,
+                                 monitors = Parametros_EjercicioN, 
+                                 thin = 1, niter = 100000, nburnin = 0, nchains = 3, 
+                                 summary = TRUE, WAIC = TRUE)
+# 5 MINUTOS (thin = 10, niter = 20.000, nburnin = 4.000) ModeloNimbleFinal
+# 25 MINUTOS (thin = 1, niter = 100.000, nburnin = 0) ModeloNimbleFinal2
+```
+
+Hacemos uso de la librería *MCMCvis* para valorar la correcta construcción de nuestro modelo. Hemos construido dos modelos para valorar si los problemas que se presentan a continuación dependían únicamente del número de iteraciones o no.
+
+```{r Nimble (3), echo=F, eval=T}
+load("ModeloNimbleFinal.rda")
+load("ModeloNimbleFinal2.rda")
+```
+
+
+
+# RESUMEN
+
+```{r Nimble Resumen (1), echo=T, eval=T}
+head(MCMCsummary(ModeloNimbleFinal$samples, params = "omega", Rhat = TRUE, n.eff = TRUE))
+head(MCMCsummary(ModeloNimbleFinal2$samples, params = "omega", Rhat = TRUE, n.eff = TRUE))
+```
+
+El número efectivo de simulaciones sí que parece correcto, aunque en alguno casos sigue siendo superior al máximo de simulaciones (4800 para *ModeloNimbleFinal.rda*). En cualquier caso, por lo menos en este paquete, la valoración del *Rhat* no es ningún caso positiva.
+
+Procedemos a calcularlo utilizando el paquete *rstan* que empleamos en el último informe.
+
+```{r Nimble Resumen (2), echo=T, eval=T}
+MCMC <- rbind(ModeloNimbleFinal$samples$chain1,
+              ModeloNimbleFinal$samples$chain2,
+              ModeloNimbleFinal$samples$chain3)
+Rhat <- c()
+for (i in 1:ncol(MCMC)){
+  Rhat <- c(Rhat, Rhat(MCMC[, i]))
+}
+summary(Rhat)
+
+# MCMC <- rbind(ModeloNimbleFinal2$samples$chain1,
+#               ModeloNimbleFinal2$samples$chain2,
+#               ModeloNimbleFinal2$samples$chain3)
+# Rhat <- c()
+# for (i in 1:ncol(MCMC)){
+#   Rhat <- c(Rhat, Rhat(MCMC[, i]))
+# }
+# summary(Rhat)
+```
+
+Con el paquete de *Rstan* que utilizamos en el informe anterior los resultados son algo mejores, pero de todas formas no los esperados.
+
+```{r Nimble Resumen (3), echo=T, eval=T, fig.height=4, fig.width=4, fig.align='center'}
+MCMCtrace(ModeloNimbleFinal$samples, params = c('omega[1]', 'omega[2]', 'omega[3]'), 
+          ISB = FALSE, exact = TRUE, pdf = FALSE)
+MCMCtrace(ModeloNimbleFinal2$samples, params = c('omega[1]', 'omega[2]', 'omega[3]'), 
+          ISB = FALSE, exact = TRUE, pdf = FALSE)
+```
+
+Las cadenas no convergen. Necesario investigar esta línea. ¿Puede estar aquí la importancia del *label.swiching*?
+
+Obviando temporalmente estos problemas y dejando aparte la técnica de *label.switching* esta es la clasificación propuesta para nuestro modelo.
+
+```{r Nimble Resumen (4), echo=T, eval=T, fig.height=2, fig.width=2, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "blue", "pink", "green"))
+ClasificacionMelanomaZhao$spatial.cluster <- ModeloNimbleFinal$summary$chain1[375:667, 2]
+clusterPlot(ClasificacionMelanomaZhao, palette = c("pink", "red", "green", "blue"))
+ClasificacionMelanomaZhao$spatial.cluster <- ModeloNimbleFinal$summary$chain2[375:667, 2]
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "pink", "green"))
+ClasificacionMelanomaZhao$spatial.cluster <- ModeloNimbleFinal$summary$chain3[375:667, 2]
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "green", "red", "pink"))
+```
+
+Las clasificaciones son respetables pero bastante peores que las obtenidas previamente en el modelo que formulamos con tan solo una única cadena. Estas son las reflexiones que queremos dejar en torno a este primer punto:
+
++ **Buscando información sobre estos problemas (adjuntamos algunas páginas en la bibliografía), se recomendaba la realización de un test de Gelman Rubin multimodal, útil para ejercicios donde algunas de nuestras variables pueden adoptar un número discreto y limitado de valores.**
+
++ **Mostramos los resultados a continuación. Para ello ha sido necesario añadir el parámetro *samplesAsCodaMCMC = T* en nuestro modelo de nimble. El test de Gelman Rubin multivariante conlleva fijar *multivariate = T*. No obstante procediendo de esta manera, obtenemos un error por un problema con una matriz no definida positiva en la descomposición de Cholevski que ejecuta la función. Este problema es fruto además de una serie de iteraciones, por lo que puede surgir o no y en distintos puntos de la iteración**. 
+
++ **El test de Gelman Rubin bajo la coyuntura de ante (*multivariate = F*) confirma los mismos malos resultados obtenidos previamente**
+
+```{r, echo=T, eval=F}
+ModeloNimbleFinalCoda <- nimbleMCMC(Modelo_EjercicioN, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V=diag(1, 7),
+                                                     dirch_alpha = c(1, 1, 1, 1),
+                                                     tau_0 = diag(0.01, 7)),
+                                    inits = Iniciales_EjercicioN,
+                                    monitors = Parametros_EjercicioN, 
+                                    thin = 10, niter = 20000, nburnin = 4000, nchains = 3,
+                                    samplesAsCodaMCMC = T,
+                                    summary = TRUE, WAIC = TRUE)
+
+# gelman.diag(ModeloNimbleFinalCoda$samples, multivariate = T)
+# head(gelman.diag(ModeloNimbleFinalCoda$samples, multivariate = F))
+```
+
++ **Esto nos invita a pensar en la importancia del label.switching en este contexto, aunque nosotros realmente recurrimos a él posteriormente ejecutado el modelo. Habrá que pensar de que forma procedemos, si corriendo una única cadena con un gran número de iteraciones (no parece lo correcto) o trabajamos en esta línea para resolver los problemas de multimodalidad**
+
++ **Intentamos igualmente ser un poco más precisos y más informativos con nuestras distribuciones previas y valores iniciales de los parámetros de nuestro ejercicio pero casi no hubo ninguna mejora en los resultados obtenidos. Otro punto final que nos lleva a pensar en la no convergencia de las cadenas es el hecho de que el cluster 1 en una cadena es el cluster 4 en otra y el cluster 3 en la restante. Esto sucede en casi todos los clusters.**
+
+
+
+# BIBLIOGRAFIA
+
+[Paquete MCMCVis](https://cran.r-project.org/web/packages/MCMCvis/vignettes/MCMCvis.html)
+
+[Utilidad nburnin](https://www.johndcook.com/blog/2011/08/10/markov-chains-dont-converge/)
+
+[Convergencia Cadenas 1](https://stats.stackexchange.com/questions/319561/what-if-markov-chain-does-not-converge-in-a-reasonable-amount-of-time)
+
+[Convergencia Cadenas 2](https://stats.stackexchange.com/questions/474668/mcmc-is-gelman-rubin-diagnostic-criteria-good-for-checking-convergence-of-mcmc)

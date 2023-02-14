@@ -1,0 +1,251 @@
+---                                           
+title: 'SpatialPoligonsDF'    
+author: "Luis Requeni Zamora"
+date: "01/02/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(dplyr)
+library(ggplot2)
+library(hrbrthemes)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spatialDE)
+library(spdep)
+library(sqldf)
+library(tidyr)
+```
+
+En este documento se trabaja en 3 líneas claras y definidas:
+
++ Trabajo con nuestros datos bajo una estructura de *SpatialPolygonsDataFrame*.
+
++ Definición y establecimiento de una pequeña y simple relación de vencidad para nuestros datos.
+
++ Incorporación a través de nimble de la estadística espacial.
+
+Aprovecharemos para ello parte de la información utilizada en el script *4. ProbabilidadClusters* donde de alguna manera ya hemos limpiado la información correspondiente a la localización de nuestros spots.
+
+Aportamos finalmente una pequeña bibliografía sobre vías para explorar en el futuro.
+
+
+
+# SPATIAL POLYGONS DATA.FRAME
+
+Cargamos la información recogida en documentos posteriores con la información de nuestra ACP.
+
+```{r Spatial Polygons (1), echo=F, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+datos <- melanoma_int_colData_reducedDims
+```
+
+```{r Spatial Polygons (2), echo=t, eval=T}
+datos2 <- read.table(file = "ST-Melanoma-Datasets_1/ST_mel1_rep2_counts.tsv", 
+                     sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+
+x <- substr(colnames(datos2), 1, 3)
+x <- as.numeric(gsub("x", "", gsub("X", "", x)))
+y <- substr(colnames(datos2), 4, 6)
+y <- as.numeric(gsub("x", "", gsub("X", "", y)))
+```
+
+Definir una estructura bajo la coyuntura de poligonos resulta complicado con la información de la que disponemos. De esta manera, hemos realizado una aproximación mediante el uso de Spatial Points.
+
+
+
+# RELACION DE VECINDAD
+
+```{r Vecindad (1), echo=T, eval=T}
+coordenadas <- cbind(y, x)
+spatialpoint <- SpatialPoints(coordenadas)
+spatialpointdf <- SpatialPointsDataFrame(spatialpoint, datos)
+
+test <- knn2nb(knearneigh(coordenadas))
+# summary(test)
+```
+
+La variable test guarda para cada uno de nuestros 293 spots su vecino más próximo. Por establecer una primera relación de vecindad, hemos recogido en una matriz para cada spot y para cada componente principal, la media entre el valor anotado para el propio spot y su spot más próximo.
+
+```{r Vecindad (2), echo=T, eval=T}
+vecindad <- matrix(nrow = nrow(datos), ncol = ncol(datos))
+
+for(i in 1:293){
+  for(j in 1:7){
+    vecindad[i, j] <- mean(c(as.numeric(datos[i, j]), as.numeric(datos[test[[i]], j])))  
+  }
+}
+
+vecindad <- as.data.frame(vecindad)
+```
+
+
+
+# ESTADÍSTICA ESPACIAL
+
+Aprovechando la información de la matriz de vecindad hemos construido dos modelos nuevos. En el primero, simplemente decidimos trabajar con la matriz de vecindaddes en lugar con la propia del ACP. En el segundo caso, tratamos de combinar ambas matrices en un único modelo. Los resultados en el primer caso son satisfactorios aunque seguramente no aporten ninguna mejora.
+
+En el segundo caso, no hemos obtenido las conclusiones esperadas. Seguimos trabajando en esta línea.
+
+```{r Estadistica Espacial (1), echo=T, eval=F}
+y <- vecindad
+
+Modelo_EjercicioNSP <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+    # PLANTEAR LA ESTADISTICA ESPACIAL DESDE LA PERSPECTIVA MULTINOMIAL
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+
+
+
+
+
+
+Iniciales_EjercicioNSP <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioNSP <- c("omega", "mus", "z", "tau", "w")
+
+
+
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleSpatialPolygons <- nimbleMCMC(Modelo_EjercicioNSP, data = list(y = y), 
+                                          constants = list(mu_0 = rep(0, 7),
+                                                           wish_V=diag(1, 7),
+                                                           dirch_alpha = c(1, 1, 1, 1),
+                                                           tau_0 = diag(0.01, 7)),
+                                          inits = Iniciales_EjercicioNSP,
+                                          monitors = Parametros_EjercicioNSP, 
+                                          thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                          summary = TRUE, WAIC = TRUE)
+```
+
+```{r Estadistica Espacial (2), echo=T, eval=F}
+y <- datos
+Modelo_EjercicioNSP <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    yy[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    y[i, 1:7] <- yy[i, 1:7]  + spatial[i, 1:7]
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+    # PLANTEAR LA ESTADISTICA ESPACIAL DESDE LA PERSPECTIVA MULTINOMIAL
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+
+
+
+Iniciales_EjercicioNSP <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioNSP <- c("omega", "mus", "z", "tau", "w")
+
+
+
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleSpatialPolygons2 <- nimbleMCMC(Modelo_EjercicioNSP, data = list(y = y, 
+                                                                            spatial = vecindad), 
+                                           constants = list(mu_0 = rep(0, 7),
+                                                            wish_V=diag(1, 7),
+                                                            dirch_alpha = c(1, 1, 1, 1),
+                                                            tau_0 = diag(0.01, 7)),
+                                           inits = Iniciales_EjercicioNSP,
+                                           monitors = Parametros_EjercicioNSP, 
+                                           thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                           summary = TRUE, WAIC = FALSE)
+                                           # Cuidado con WAIC
+```
+
+```{r Estadistica Espacial (3), echo=F, eval=T}
+load("ClasificacionMelanomaZhao.rda")
+load("ModeloNimbleSP.rda")
+load("ModeloNimbleSP2.rda")
+```
+
+```{r Estadistica Espacial (4), echo=T, eval=T, fig.width=3, fig.height=3, fig.align='center'}
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "blue", "pink", "green"))
+ClasificacionMelanomaZhao$spatial.cluster <- ModeloNimbleSpatialPolygons$summary[375:667, 2]
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "green", "pink"))
+ClasificacionMelanomaZhao$spatial.cluster <- ModeloNimbleSpatialPolygons2$summary[375:667, 2]
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "green", "pink"))
+```
+
+La última parte en la que hemos estado investigando ha sido en el concepto de la distribución *car.normal*. Creemos que podría aportar mejoras a nuestro modelo pero ahora mismo no sabemos como incorporarla.
+
+
+
+# BIBLIOGRAFÍA
+
+[Vecindad Spatial Points](https://gis.stackexchange.com/questions/262887/converting-spatial-points-to-neighbours-list-using-r)
+
+[Roger Bivand 2009](https://stat.ethz.ch/pipermail/r-sig-geo/2009-December/007220.html)
+
+[Car Model 1](https://r-nimble.org/html_manual/cha-spatial.html)
+
+[Car Modelo 2](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5176110/)

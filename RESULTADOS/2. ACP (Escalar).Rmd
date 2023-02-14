@@ -1,0 +1,170 @@
+---                                            
+title: 'ACP (Escalar)'    
+author: "Luis Requeni Zamora"
+date: "01/02/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spdep)
+library(tidyr)
+```
+
+En este *script* nos centramos en conseguir la matriz de componentes principales a partir de los recuentos para cada uno de nuestros genes en los distintos spots.
+
+
+
+# OBTENCION DE LA INFORMACIÓN
+
+Originalmente nosotros construimos en el script *BayesSpace (Luis).Rmd* dicha matriz de recuentos a partir de la información proporcionada por el objeto *SingleCellExperiment()* asociado a nuestro banco de datos de melanoma.
+
+```{r Informacion (1), echo=T, eval=T}
+load("MelanomaZhao.rda")
+datos1 <- datos[, -1]
+```
+
+No obstante, esa información está también disponible y mucho más clara con la posición de los distintos spots y el nombre de los diferentes genes en la carpeta *ST-Melanoma-Datasets_1*. En concreto nosotros hemos estado trabajando con la muestra *ST_mel1_rep2_counts*.
+
+```{r Informacion (2), echo=T, eval=T}
+datos2 <- read.table(file = "ST-Melanoma-Datasets_1/ST_mel1_rep2_counts.tsv", sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+datos2 <- as.data.frame(t(datos2))
+```
+
+Las dimensiones de los dos datasets son las mismas y hemos realizado una serie de comprobaciones para verificar que realmente recogen la misma información.
+
+```{r Informacion (3), echo=T, eval=T}
+auxiliar1_datos1 <- apply(datos1, 1, sum)
+auxiliar1_datos2 <- as.numeric(apply(datos2, 1, sum))
+sum(auxiliar1_datos1 == auxiliar1_datos2)
+
+auxiliar2_datos1 <- apply(datos1, 2, sum)
+auxiliar2_datos2 <- as.numeric(apply(datos2, 2, sum))
+sum(auxiliar2_datos1 == auxiliar2_datos2)
+```
+
+
+
+# CONSTRUCCION ACP
+
+A partir de la información suplementaria proporcionada en *1. Ts. Zhao 2021* se explica la obtención de dicha matriz de componentes principales que nos permitiría así realizar el estudio aquí planteado para cualquier matriz de recuentos. En concreto se realiza la *ACP* a partir de la normalización de la transformación logarítmica de los 2.000 genes más variables. En el siguiente script, *3. Genes Variables.Rmd* abordamos esa selección de los *x* genes más variables.
+
+Entendemos que los problemas que obtuvimos hace unas semanas para la práctica de la ACP con todas las variables y los conteos absolutos se podrían solucionar trabajando de esta forma.
+
+Para realizar una primera aproximación nosotros vamos a considerar como más variables aquellos 2.000 genes con una mayor desviación a lo largo de los distintos spots.
+
+```{r Construccion (1), echo=T, eval=T}
+desviacion <- apply(datos2, 2, sd)
+posiciones <- order(desviacion, decreasing = T)[1:2000]
+datosPCA <- datos2[, posiciones]
+datosPCA <- as.data.frame(apply(datosPCA, 2, as.numeric))
+```
+
+Conseguir construir la ACP mediante la función *princomp()* nos permetiría conocer la cantidad de información explicada para un determinado número de componentes principales, así como estudiar cuales son los genes que tienen un mayor protagonismo en dichas componentes y por ende en el futuro modelo de nimble planteado posteriormente.
+
+No obstante dicha función sigue sin funcionar dado que solo es útil cuando el número de observaciones es igual o superior al de variables, de manera que solo podríamos emplearla para un tope de 293 genes variables. Si funciona en cambio la función *prcomp()*, que aunque no devuelve la cantidad de información explicada sí posibilita realizar la PCA.
+
+Vamos a transformar los conteos con valor cero a datos faltantes para no tener problemas en el análisis de componentes principales al realizar la transformación logarítmica.
+
+```{r Construccion (2), echo=T, eval=T}
+datosPCA <- log(datosPCA)
+datosPCA[datosPCA == -Inf] <- 0
+# datosPCA[datosPCA == -Inf] <- NA
+# colnames(datosPCA) <- paste0("V", 1:2000)
+# as.formula(paste("~ ", paste(colnames(datosPCA), collapse= "+")))
+Prueba <- prcomp(datosPCA, rank. = 7)
+```
+
+Demasiados problemas para poder realizar el ACP. En cualquier caso, vamos a construir un modelo sobre la ACP practicada y comparar con los resultados que teníamos previamente.
+
+\newpage
+
+```{r Construccion (3), echo=T, eval=T}
+y <- as.data.frame(Prueba$x)
+Modelo_EjercicioNACP <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+    # PLANTEAR LA ESTADISTICA ESPACIAL DESDE LA PERSPECTIVA MULTINOMIAL
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+Iniciales_EjercicioNACP <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioNACP <- c("omega", "mus", "z", "tau", "w")
+```
+
+```{r Construccion (4), echo=T, eval=F}
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleFinalACP <- nimbleMCMC(Modelo_EjercicioNACP, data = list(y = y), 
+                                   constants = list(mu_0 = rep(0, 7),
+                                                    wish_V = diag(1, 7),
+                                                    dirch_alpha = c(1, 1, 1, 1),
+                                                    tau_0 = diag(0.01, 7)),
+                                   inits = Iniciales_EjercicioNACP,
+                                   monitors = Parametros_EjercicioNACP, 
+                                   thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                   summary = TRUE, WAIC = TRUE)
+```
+
+```{r Construccion (5), echo=F, eval=T}
+load("ModeloNimbleFinalACP.rda")
+```
+
+```{r Construccion (6), echo=T, eval=T, fig.height=3, fig.width=3, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "green", "blue", "pink"))
+ClasificacionMelanomaZhao$spatial.cluster <- as.numeric(ModeloNimbleFinalACP$summary[375:667, 2])
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "green", "blue", "pink"))
+```
+
+Mucha faena por hacer todavía al respecto.
+
+# BIBLIOGRAFIA
+
+
+

@@ -1,0 +1,183 @@
+---                                           
+title: 'Probabilidad Clusters'    
+author: "Luis Requeni Zamora"
+date: "01/02/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(dplyr)
+library(ggplot2)
+library(hrbrthemes)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spatialDE)
+library(spdep)
+library(sqldf)
+library(tidyr)
+```
+
+Buscamos por una parte construir manualmente los clusters plots mostrados en informes previos. Los actuales se construyen directamente a partir del paquete *BayesSpace* y precisan de un objeto del tipo *SingleCellExperiment*. Formulamos la manera de construirlos directamente desde R a partir de las características propias de *ggplot*.
+
+Una vez resuelto este primer paso, planteamos una serie de gráficos que para un determinado cluster, asignan graficamente su probabilidad de pertencia a cada uno de los distintos spots.
+
+
+
+# RESULTADOS PREVIOS
+
+Cargamos inicialmente la información del modelo nimble formulado en el último informe. Cargamos igualmente el dataset con nuestras distintas coordenadas.
+
+```{r Resultados Previos (1), echo=T, eval=T}
+load("/Users/requeni7598/Desktop/UNIVERSIDAD/MASTER 2 BIOEST/TFM/ModeloNimble1.rda")
+```
+
+```{r Resultados Previos (2), echo=T, eval=T}
+datos2 <- read.table(file = "ST-Melanoma-Datasets_1/ST_mel1_rep2_counts.tsv", 
+                     sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+
+x <- substr(colnames(datos2), 1, 3)
+x <- as.numeric(gsub("x", "", gsub("X", "", x)))
+y <- substr(colnames(datos2), 4, 6)
+y <- as.numeric(gsub("x", "", gsub("X", "", y)))
+```
+
+Por un lado, aprovecharemos la clasificación propuesta. Por otro, extraeremos las distintas probabilidades comentadas previamente.
+
+```{r Resultados Previos (3), echo=T, eval=T}
+clasificacion <- as.numeric(Resul_EjercicioN$summary[
+                 (nrow(Resul_EjercicioN$summary) - 292):nrow(Resul_EjercicioN$summary), 2])
+base <- data.frame(x, y, clasificacion)
+
+probabilidades <- Resul_EjercicioN$samples[, 
+                  (nrow(Resul_EjercicioN$summary) - 292):nrow(Resul_EjercicioN$summary)]
+resumen_probabilidades <- apply(probabilidades, 2, table)
+
+vector1 <- c()
+vector2 <- c() 
+vector3 <- c()
+for(i in 1:293){
+  aux <- which(names(prop.table(resumen_probabilidades[[i]])) == "1")  
+  sol <- as.numeric(prop.table(resumen_probabilidades[[i]])[aux])
+  if(length(sol) == 0){
+    sol <- 0
+  }
+  vector1 <- c(vector1, sol)
+  
+  aux <- which(names(prop.table(resumen_probabilidades[[i]])) == "2")  
+  sol <- as.numeric(prop.table(resumen_probabilidades[[i]])[aux])
+  if(length(sol) == 0){
+    sol <- 0
+  }
+  vector2 <- c(vector2, sol)
+  
+  aux <- which(names(prop.table(resumen_probabilidades[[i]])) == "3")
+  sol <- as.numeric(prop.table(resumen_probabilidades[[i]])[aux])
+  if(length(sol) == 0){
+    sol <- 0
+  }
+  vector3 <- c(vector3, sol)
+}
+```
+
+
+
+# CLUSTERIZACIÓN
+
+Entre las distintas opciones barajadas, la realización de una especie de *heatmap* es la que se acerca más a nuestras pretensiones. 
+
+```{r Clusterizacion (1), echo=T, eval=T, message=F}
+axisx <- 1:30
+axisy <- 1:30
+base_aux <- expand.grid(axisx, axisy)
+colnames(base_aux) <- c("x", "y")
+
+base <- full_join(base, base_aux)
+base <- sqldf("SELECT * FROM base ORDER BY x, y")
+```
+
+```{r Clusterizacion (2), echo=T, eval=T, fig.align='center', fig.height=3, fig.width=3}
+colors <- c("red", "green", "blue")
+textcol <- "black"
+
+ggplot(base, aes(x = y, y = x, fill = factor(clasificacion))) +
+  geom_tile(colour = "white", linewidth = 0.5) +
+  guides(fill = guide_legend(title = "Cluster")) +
+  labs(x = "", y = "", title = "Clusterizacion Melanoma") +
+  scale_fill_manual(values = colors, na.value = "white") +
+  theme_void(base_size = 10) +
+  theme(legend.position = "right", legend.direction = "vertical",
+        legend.title = element_text(colour = textcol),
+        legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+        plot.background = element_blank(),
+        panel.border = element_blank(),
+        plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+        plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+```
+
+Recordando la ilustración del último informe podemos estar contentos con la construcción. Aprovechamos ahora para mostrar también unos mapas con la probabilidad de pertenencia de cada cluster a cada spot, visualización que no era posible con la función *clusterPlot* utilizada hasta ahora.
+
+```{r Clusterizacion (3), echo=T, eval=T, message=F}
+base1 <- data.frame(x, y, clasificacion)
+base1$clasificacion <- vector1
+base1 <- full_join(base1, base_aux)
+base1 <- sqldf("SELECT * FROM base1 ORDER BY x, y")
+
+base2 <- data.frame(x, y, clasificacion)
+base2$clasificacion <- vector2
+base2 <- full_join(base2, base_aux)
+base2 <- sqldf("SELECT * FROM base2 ORDER BY x, y")
+
+base3 <- data.frame(x, y, clasificacion)
+base3$clasificacion <- vector3
+base3 <- full_join(base3, base_aux)
+base3 <- sqldf("SELECT * FROM base3 ORDER BY x, y")
+```
+
+\newpage
+
+```{r Clusterizacion (4), echo=T, eval=T, fig.align='center', fig.height=3, fig.width=3}
+textcol <- "black"
+base <- list(base1, base2, base3)
+colors <- c("red", "green", "blue")
+p <- list()
+
+for(i in 1:3){
+p[[i]] <-  ggplot(base[[i]], aes(x = y, y = x, fill = clasificacion)) +
+             geom_tile(colour = "white", linewidth = 0.5) +
+             guides(fill = guide_legend(title = "Probabilidad")) +
+             labs(x = "", y = "", title = paste0("Cluster ", i, " Melanoma")) +
+             scale_fill_gradient(low = "white", high = colors[i], na.value = "white") +
+             theme_void(base_size = 10) +
+             theme(legend.position = "right", legend.direction = "vertical",
+                   legend.title = element_text(colour = textcol),
+                   legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+                   plot.background = element_blank(),
+                   panel.border = element_blank(),
+                   plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+                   plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+}
+par(mfrow=c(1, 3))
+p[[1]]; p[[2]]; p[[3]]
+```
+
+# BIBLIOGRAFIA
+

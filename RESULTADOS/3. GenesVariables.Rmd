@@ -1,0 +1,72 @@
+---                                           
+title: 'Genes Variables'    
+author: "Luis Requeni Zamora"
+date: "01/02/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spatialDE)
+library(spdep)
+library(tidyr)
+```
+
+En este documento se pretendía seguir la línea trabajada por Svensson (2018) para la identificación de genes variables, que permitiría detectar cuales son los recuentos necesarios para construir nuestra matriz de componentes principales y en definita plantear el modelo definitivo.
+
+Nuestro objetivo era en una primera instancia hacer uso del paquete *SpatialDE* que proponen para posteriormente averiguar que hay exactamente detrás con la información proporcionada por el artículo y tratar de reconocer genes variables con nuestros propios conocimientos.
+
+No obstante, el mero uso de la función *spatialDE* genera un problema con modulos obsoletos relacionados más con phyton que con R. Adjuntamos las dos referencias más relevantes al respecto que hemos encontrado en Internet. Pero ahora mismo resulta difícil trabajar en esta línea.
+
+```{r HVG (1), echo=T, eval=T}
+datos2 <- read.table(file = "ST-Melanoma-Datasets_1/ST_mel1_rep2_counts.tsv", 
+                     sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+```
+
+```{r HVG (2), echo=T, eval=T}
+x <- substr(colnames(datos2), 1, 3)
+x <- as.numeric(gsub("x", "", gsub("X", "", x)))
+y <- substr(colnames(datos2), 4, 6)
+y <- as.numeric(gsub("x", "", gsub("X", "", y)))
+```
+
+```{r HVG (3), echo=T, eval=T, error=T}
+matriz <- as.matrix(datos2)
+coordenadas <- data.frame(x, y)
+
+results <- spatialDE(x = matriz, 
+                        coordinates = coordenadas, verbose = F)
+```
+
+\newpage
+
+# BIBLIOGRAFÍA
+
+[Paquete spatialDE](hhttps://www.bioconductor.org/packages/release/bioc/manuals/spatialDE/man/spatialDE.pdf)
+
+[Svensson 2018](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6350895/)
+
+[Phyton Numpy 1](https://support.posit.co/hc/en-us/articles/360023654474-Installing-and-Configuring-Python-with-RStudio)
+
+[Phyton Numpy 2](https://stackoverflow.com/questions/74893742/how-to-solve-attributeerror-module-numpy-has-no-attribute-bool)
