@@ -1,0 +1,185 @@
+---                                            
+title: 'Genes Variables'    
+author: "Luis Requeni Zamora"
+date: "01/03/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spatialDE)
+library(spdep)
+library(tidyr)
+```
+
+```{r HVG (1), echo=T, eval=T}
+datos2 <- read.table(file = "ST-Melanoma-Datasets_1/ST_mel1_rep2_counts.tsv", 
+                     sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+```
+
+```{r HVG (2), echo=T, eval=T}
+x <- substr(colnames(datos2), 1, 3)
+x <- as.numeric(gsub("x", "", gsub("X", "", x)))
+y <- substr(colnames(datos2), 4, 6)
+y <- as.numeric(gsub("x", "", gsub("X", "", y)))
+```
+
+```{r HVG (3), echo=T, eval=T}
+datos2 <- as.data.frame(t(datos2[1, ]))
+
+coordenadas <- cbind(y, x)
+spatialpoint <- SpatialPoints(coordenadas)
+spatialpointdf <- SpatialPointsDataFrame(spatialpoint, datos2)
+```
+
+```{r HVG (4), echo=T, eval=T}
+test <- knn2nb(knearneigh(coordenadas, k = 5), sym = T)
+nbInfo <- nb2WB(test)
+
+head(nbInfo$adj)
+head(nbInfo$weights)
+head(nbInfo$num)
+```
+
+\newpage
+
+
+
+# MODELO ESTANDAR
+
+```{r Modelo Estandar (1), echo=T, eval=F}
+nregions <- nrow(datos2)
+
+ModeloGenesVariablesSIN <- nimbleCode(
+{
+  alpha ~ dunif(-100, 100)
+  sigma ~ dunif(0, 100)
+  # Gelman (2006)
+  tau <- 1 / sigma^2
+
+  # s[1:N] ~ dcar_normal(adj[1:L], weights[1:L], num[1:N], tau, zero_mean = 0)
+
+  for(i in 1:N) {
+    # log(lambda[i]) <- alpha + s[i]
+    log(lambda[i]) <- alpha
+    y[i] ~ dpois(lambda[i])
+  }
+}
+)
+
+set.seed(1)
+constantsSIN <- list(N = nregions, 
+                  L = length(nbInfo$adj), 
+                  adj = nbInfo$adj, 
+                  weights = nbInfo$weights, 
+                  num = nbInfo$num)
+dataSIN <- list(y = datos2$`PSME2 ENSG00000100911`)
+initsSIN <- list(sigma = 1, s = rnorm(nregions))
+paramSIN <- c("y", "alpha")
+
+ModeloNimbleHVSIN <- nimbleMCMC(ModeloGenesVariablesSIN, data = dataSIN, 
+                                constants = constantsSIN,
+                                inits = initsSIN,
+                                monitors = paramSIN,
+                                thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                summary = TRUE, WAIC = TRUE)
+```
+
+```{r Modelo Estandar (2), echo=T, eval=T}
+load("ModeloNimbleHVSIN.rda")
+```
+
+\newpage
+
+
+
+# MODELO ESPACIAL
+
+```{r Modelo Espacial (1), echo=T, eval=F}
+nregions <- nrow(datos2)
+
+ModeloGenesVariablesCON <- nimbleCode(
+{
+  alpha ~ dunif(-100, 100)
+  sigma ~ dunif(0, 100)
+  # Gelman (2006)
+  tau <- 1 / sigma^2
+
+  s[1:N] ~ dcar_normal(adj[1:L], weights[1:L], num[1:N], tau, zero_mean = 0)
+
+  for(i in 1:N) {
+    log(lambda[i]) <- alpha + s[i]
+    y[i] ~ dpois(lambda[i])
+  }
+}
+)
+
+set.seed(1)
+constantsCON <- list(N = nregions, 
+                  L = length(nbInfo$adj), 
+                  adj = nbInfo$adj, 
+                  weights = nbInfo$weights, 
+                  num = nbInfo$num)
+dataCON <- list(y = datos2$`PSME2 ENSG00000100911`)
+initsCON <- list(sigma = 1, s = rnorm(nregions))
+paramCON <- c("y", "alpha", "s")
+
+ModeloNimbleHVCON <- nimbleMCMC(ModeloGenesVariablesCON, data = dataCON, 
+                                constants = constantsCON,
+                                inits = initsCON,
+                                monitors = paramCON,
+                                thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                summary = TRUE, WAIC = TRUE)
+```
+
+```{r Modelo Espacial (2), echo=T, eval=T}
+load("ModeloNimbleHVCON.rda")
+```
+
+\newpage
+
+# RESUMEN
+
+```{r Resumen (1), echo=T, eval=T}
+head(ModeloNimbleHVSIN$summary)
+head(ModeloNimbleHVCON$summary)
+ModeloNimbleHVSIN$WAIC
+ModeloNimbleHVCON$WAIC
+```
+
+
+
+# BIBLIOGRAFÍA
+
+[CAR 1](https://r-nimble.org/nimbleExamples/CAR.html)
+
+[CAR 2](https://github.com/nimble-dev/nimble/blob/devel/UserManual/src/chapter_Spatial.Rmd)
+
+[CAR 3](https://rdrr.io/cran/nimble/src/R/CAR.R)
+
+
+
+
+
+

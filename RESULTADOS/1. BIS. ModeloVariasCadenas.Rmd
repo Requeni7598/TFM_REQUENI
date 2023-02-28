@@ -1,0 +1,102 @@
+---                                                
+title: 'Modelo Varias Cadenas'    
+author: "Luis Requeni Zamora"
+date: "01/03/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spdep)
+library(tidyr)
+```
+
+```{r, echo=F, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+datos <- melanoma_int_colData_reducedDims
+y <- datos
+```
+
+```{r Nimble (1), echo=T, eval=T}
+Modelo_EjercicioN <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+Iniciales_EjercicioN <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioN <- c("omega", "mus", "z", "tau", "w")
+```
+
+\newpage
+
+```{r Nimble (2), echo=T, eval=F}
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleFinalBIS1 <- nimbleMCMC(Modelo_EjercicioN, data = list(y = y), 
+                                constants = list(mu_0 = rep(0, 7),
+                                                 wish_V=diag(1, 7),
+                                                 dirch_alpha = c(1, 1, 1, 1),
+                                                 tau_0 = diag(0.01, 7)),
+                                inits = Iniciales_EjercicioN,
+                                monitors = Parametros_EjercicioN, 
+                                thin = 10, niter = 205000, nburnin = 5000, nchains = 1, 
+                                summary = TRUE, WAIC = TRUE)
+```
+
+```{r Nimble (3), echo=F, eval=T}
+load("ModeloNimbleFinalBIS1.rda")
+```
+
+```{r Nimble Resumen (1), echo=T, eval=T, fig.height=2, fig.width=2, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("pink", "blue", "red", "green"))
+ClasificacionMelanomaZhao$spatial.cluster <- ModeloNimbleFinalBIS1$summary[375:667, 2]
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "pink", "green", "blue"))
+```
+

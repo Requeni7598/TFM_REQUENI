@@ -1,0 +1,57 @@
+---                                            
+title: 'Probabilidad Clusters'    
+author: "Luis Requeni Zamora"
+date: "01/02/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(dplyr)
+library(ggplot2)
+library(hrbrthemes)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spatialDE)
+library(spdep)
+library(sqldf)
+library(tidyr)
+```
+
+
+
+```{r Resultados Previos (1), echo=T, eval=T}
+load("/Users/requeni7598/Desktop/UNIVERSIDAD/MASTER 2 BIOEST/TFM/ModeloNimble1.rda")
+```
+
+```{r}
+Clasifcaciones <- as.data.frame(Resul_EjercicioN$samples[1:1600, 367:659])
+```
+
+```{r}
+Probabilidades <- matrix(nrow = 293, ncol = 293)
+for(i in 1:293){
+  for(j in 1:293){
+    Probabilidades[i, j] <- sum(Clasifcaciones[, i] == Clasifcaciones[, j])/1600
+  }
+}
+```
+
+
+

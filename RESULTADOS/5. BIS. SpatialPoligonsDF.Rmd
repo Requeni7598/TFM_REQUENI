@@ -1,0 +1,159 @@
+---                                            
+title: 'SpatialPoligonsDF'    
+author: "Luis Requeni Zamora"
+date: "01/02/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(chemometrics)
+library(dplyr)
+library(ggplot2)
+library(hrbrthemes)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spatialDE)
+library(spdep)
+library(sqldf)
+library(tidyr)
+```
+
+```{r Spatial Polygons (1), echo=F, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+datos <- melanoma_int_colData_reducedDims
+```
+
+```{r Spatial Polygons (2), echo=t, eval=T}
+datos2 <- read.table(file = "ST-Melanoma-Datasets_1/ST_mel1_rep2_counts.tsv", 
+                     sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+
+x <- substr(colnames(datos2), 1, 3)
+x <- as.numeric(gsub("x", "", gsub("X", "", x)))
+y <- substr(colnames(datos2), 4, 6)
+y <- as.numeric(gsub("x", "", gsub("X", "", y)))
+```
+
+
+
+# RELACION DE VECINDAD
+
+```{r Vecindad (1), echo=T, eval=T}
+coordenadas <- cbind(y, x)
+spatialpoint <- SpatialPoints(coordenadas)
+spatialpointdf <- SpatialPointsDataFrame(spatialpoint, datos)
+
+test <- knn2nb(knearneigh(coordenadas, k = 5), sym = T)
+nbInfo <- nb2WB(test)
+```
+
+```{r Vecindad (2), echo=T, eval=T}
+vecindad <- matrix(nrow = nrow(datos), ncol = ncol(datos))
+
+for(i in 1:293){
+  for(j in 1:7){
+    vecindad[i, j] <- mean(c(as.numeric(datos[i, j]), as.numeric(datos[test[[i]], j])))  
+  }
+}
+
+vecindad <- as.data.frame(vecindad)
+```
+
+
+
+# ESTADÍSTICA ESPACIAL
+
+```{r Estadistica Espacial (1), echo=T, eval=F}
+y <- datos
+
+Modelo_EjercicioNSP <- nimbleCode(
+{
+  alpha ~ dunif(-100, 100)
+  sigma ~ dunif(0, 100)
+  # Gelman (2006)
+  tautau <- 1 / sigma^2
+  
+  s[1:293] ~ dcar_normal(adj[1:L], weights[1:L], num[1:293], tautau, zero_mean = 0)
+  
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4, i])
+    for(k in 1:4){
+      omega[k, i] <- Phi[k, i]/sum(Phi[1:4, i])
+      log(Phi[k, i]) <- alpha + s[i]  
+    }
+  }
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+
+Iniciales_EjercicioNSP <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = matrix(rep(c(1/4, 1/4, 1/4, 1/4), 293), ncol = 293),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioNSP <- c("mus", "z", "tau", "w")
+
+
+
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleSpatialPolygons <- nimbleMCMC(Modelo_EjercicioNSP, data = list(y = y), 
+                                          constants = list(mu_0 = rep(0, 7),
+                                                           wish_V=diag(1, 7),
+                                                           tau_0 = diag(0.01, 7), 
+                                                           L = length(nbInfo$adj), 
+                                                           adj = nbInfo$adj, 
+                                                           weights = nbInfo$weights, 
+                                                           num = nbInfo$num),
+                                          inits = Iniciales_EjercicioNSP,
+                                          monitors = Parametros_EjercicioNSP, 
+                                          thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                          summary = TRUE, WAIC = TRUE)
+```
+
+```{r Estadistica Espacial (4), echo=T, eval=T, fig.width=3, fig.height=3, fig.align='center'}
+par(mfrow = c(1, 2))
+load("ClasificacionMelanomaZhao.rda")
+load("ModeloNimbleSpatialPolygons.rda")
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "blue", "pink", "green"))
+ClasificacionMelanomaZhao$spatial.cluster <- ModeloNimbleSpatialPolygons$summary[371:663, 2]
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "green", "pink"))
+```
+
+
+

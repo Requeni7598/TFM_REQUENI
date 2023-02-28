@@ -1,4 +1,4 @@
----                                           
+---                                            
 title: 'SpatialPoligonsDF'    
 author: "Luis Requeni Zamora"
 date: "01/02/2023"
@@ -77,12 +77,16 @@ Definir una estructura bajo la coyuntura de poligonos resulta complicado con la 
 
 # RELACION DE VECINDAD
 
+TRABAJAR CON MÁS VECINOS
+
+VER DIFERENCIAS ENTRE MODELO CON O SIN VECINOS, MAS O MENOS VECINOS
+
 ```{r Vecindad (1), echo=T, eval=T}
 coordenadas <- cbind(y, x)
 spatialpoint <- SpatialPoints(coordenadas)
 spatialpointdf <- SpatialPointsDataFrame(spatialpoint, datos)
 
-test <- knn2nb(knearneigh(coordenadas))
+test <- knn2nb(knearneigh(coordenadas, k = 5))
 # summary(test)
 ```
 
@@ -119,9 +123,20 @@ Modelo_EjercicioNSP <- nimbleCode(
     wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
     w[i] ~ dgamma(2, 2)
     z[i] ~ dcat(omega[1:4]) 
+    # z[i] PERTENECE IGUAL
     # PLANTEAR LA ESTADISTICA ESPACIAL DESDE LA PERSPECTIVA MULTINOMIAL
+    # BUSCAR OTRA DISTRIBUCION PARA Z
   }
   omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  # VAMOS A REALIZAR LOS CAMBIOS SOBRE OMEGA
+  # RECORDAR MODELO ALVARO. PAG 9/18
+  # Omega[i] <- Phi[1]/Phi[1] + ... + Phi[4]
+  # Modelizamos Phi
+  # Log[Phi[i]] <- Besag
+  # Cuidado. Esto debería ir dentro del bucle
+  # Pasamos de omega[1:4] a omega[1:4, i]
+  
+  
   for (h in 1:4) 
   {
     mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
@@ -164,6 +179,9 @@ ModeloNimbleSpatialPolygons <- nimbleMCMC(Modelo_EjercicioNSP, data = list(y = y
                                           thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
                                           summary = TRUE, WAIC = TRUE)
 ```
+
+
+OLVIDAMOS ESTO 
 
 ```{r Estadistica Espacial (2), echo=T, eval=F}
 y <- datos
@@ -249,3 +267,6 @@ La última parte en la que hemos estado investigando ha sido en el concepto de l
 [Car Model 1](https://r-nimble.org/html_manual/cha-spatial.html)
 
 [Car Modelo 2](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5176110/)
+
+
+

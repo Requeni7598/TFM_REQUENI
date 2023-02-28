@@ -1,4 +1,4 @@
----                                           
+---                                            
 title: 'Genes Variables'    
 author: "Luis Requeni Zamora"
 date: "01/02/2023"
@@ -56,10 +56,12 @@ matriz <- as.matrix(datos2)
 coordenadas <- data.frame(x, y)
 
 results <- spatialDE(x = matriz, 
-                        coordinates = coordenadas, verbose = F)
+                     coordinates = coordenadas, verbose = F)
 ```
 
 \newpage
+
+
 
 # BIBLIOGRAFÍA
 

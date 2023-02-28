@@ -1,0 +1,261 @@
+---                                             
+title: 'ACP (Escalar)'    
+author: "Luis Requeni Zamora"
+date: "01/03/2023"
+output: 
+   pdf_document: default
+   html_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(BayesSpace)
+library(caret)
+library(chemometrics)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(sf)
+library(SingleCellExperiment)
+library(sp)
+library(spdep)
+library(tidyr)
+```
+
+
+# OBTENCION DE LA INFORMACIÓN
+
+```{r Informacion (1), echo=T, eval=T}
+datos2 <- read.table(file = "ST-Melanoma-Datasets_1/ST_mel1_rep2_counts.tsv", sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+datos2 <- as.data.frame(t(datos2))
+```
+
+
+
+# CONSTRUCCION ACP
+
+```{r Construccion (1), echo=T, eval=T}
+datosPCA <- datos2
+datosPCA <- log(datosPCA + 1)
+Tecnica1 <- prcomp(datosPCA, rank. = 7)
+```
+
+\newpage
+
+```{r Construccion (2), echo=T, eval=T}
+y <- as.data.frame(Tecnica1$x)
+Modelo_EjercicioBIS2TEC1 <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+Iniciales_EjercicioBIS2TEC1 <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioBIS2TEC1 <- c("omega", "mus", "z", "tau", "w")
+```
+
+```{r Construccion (3), echo=T, eval=F}
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleFinalBIS2TEC1 <- nimbleMCMC(Modelo_EjercicioBIS2TEC1, data = list(y = y), 
+                                        constants = list(mu_0 = rep(0, 7),
+                                                         wish_V = diag(1, 7),
+                                                         dirch_alpha = c(1, 1, 1, 1),
+                                                         tau_0 = diag(0.01, 7)),
+                                        inits = Iniciales_EjercicioBIS2TEC1,
+                                        monitors = Parametros_EjercicioBIS2TEC1, 
+                                        thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                        summary = TRUE, WAIC = TRUE)
+```
+
+```{r Construccion (4), echo=F, eval=T}
+load("ModeloNimbleFinalBIS2TEC1.rda")
+```
+
+```{r Construccion (5), echo=T, eval=T, fig.height=3, fig.width=3, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "green", "blue", "pink"))
+ClasificacionMelanomaZhao$spatial.cluster <- as.numeric(ModeloNimbleFinalBIS2TEC1$summary[375:667, 2])
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "pink", "green"))
+```
+
+
+
+```{r Construccion (6), echo=T, eval=T}
+datosPCA <- datos2
+datosPCA <- log(datosPCA + 1)
+Tecnica2 <- preProcess(datosPCA, method = c("range"))
+Tecnica2 <- predict(Tecnica2, datosPCA)
+Tecnica2 <- prcomp(Tecnica2, rank. = 7)
+```
+
+\newpage
+
+```{r Construccion (7), echo=T, eval=T}
+y <- as.data.frame(Tecnica2$x)
+Modelo_EjercicioBIS2TEC2 <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+Iniciales_EjercicioBIS2TEC2 <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioBIS2TEC2 <- c("omega", "mus", "z", "tau", "w")
+```
+
+```{r Construccion (8), echo=T, eval=F}
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleFinalBIS2TEC2 <- nimbleMCMC(Modelo_EjercicioBIS2TEC2, data = list(y = y), 
+                                        constants = list(mu_0 = rep(0, 7),
+                                                         wish_V = diag(1, 7),
+                                                         dirch_alpha = c(1, 1, 1, 1),
+                                                         tau_0 = diag(0.01, 7)),
+                                        inits = Iniciales_EjercicioBIS2TEC2,
+                                        monitors = Parametros_EjercicioBIS2TEC2, 
+                                        thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                        summary = TRUE, WAIC = TRUE)
+```
+
+```{r Construccion (9), echo=F, eval=T}
+load("ModeloNimbleFinalBIS2TEC2.rda")
+```
+
+```{r Construccion (10), echo=T, eval=T, fig.height=3, fig.width=3, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "green", "blue", "pink"))
+ClasificacionMelanomaZhao$spatial.cluster <- as.numeric(ModeloNimbleFinalBIS2TEC2$summary[375:667, 2])
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "blue", "pink", "green"))
+```
+
+
+
+```{r Construccion (11), echo=T, eval=T}
+datosPCA <- datos2
+datosPCA <- log(datosPCA + 1)
+datosPCA <- scale(datosPCA)
+Tecnica3 <- prcomp(datosPCA, rank. = 7)
+```
+
+\newpage
+
+```{r Construccion (12), echo=T, eval=T}
+y <- as.data.frame(Tecnica3$x)
+Modelo_EjercicioBIS2TEC3 <- nimbleCode(
+{
+  for(i in 1:293)
+  {
+    y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7])
+    wi_tau[1:7, 1:7] <- w[i]*tau[1:7, 1:7]
+    w[i] ~ dgamma(2, 2)
+    z[i] ~ dcat(omega[1:4]) 
+    # PLANTEAR LA ESTADISTICA ESPACIAL DESDE LA PERSPECTIVA MULTINOMIAL
+  }
+  omega[1:4] ~ ddirich(dirch_alpha[1:4])
+  for (h in 1:4) 
+  {
+    mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+  }
+  tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+}
+)
+
+set.seed(1)
+tau_ini <- diag(1,7)
+z_ini <- sample(c(1, 2, 3, 4), 293, replace = T)
+
+Iniciales_EjercicioBIS2TEC3 <- function()
+{
+  list(tau = tau_ini,
+       z = z_ini,
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = c(1/4, 1/4, 1/4, 1/4),
+       w = rep(1, 293))
+}
+
+Parametros_EjercicioBIS2TEC3 <- c("omega", "mus", "z", "tau", "w")
+```
+
+```{r Construccion (13), echo=T, eval=F}
+nimbleOptions(showCompilerOutput = F)
+ModeloNimbleFinalBIS2TEC3 <- nimbleMCMC(Modelo_EjercicioBIS2TEC3, data = list(y = y), 
+                                        constants = list(mu_0 = rep(0, 7),
+                                                         wish_V = diag(1, 7),
+                                                         dirch_alpha = c(1, 1, 1, 1),
+                                                         tau_0 = diag(0.01, 7)),
+                                        inits = Iniciales_EjercicioBIS2TEC3,
+                                        monitors = Parametros_EjercicioBIS2TEC3, 
+                                        thin = 10, niter = 20000, nburnin = 4000, nchains = 1, 
+                                        summary = TRUE, WAIC = TRUE)
+```
+
+```{r Construccion (14), echo=F, eval=T}
+load("ModeloNimbleFinalBIS2TEC3.rda")
+```
+
+```{r Construccion (15), echo=T, eval=T, fig.height=3, fig.width=3, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+par(mfrow = c(1, 2))
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "green", "blue", "pink"))
+ClasificacionMelanomaZhao$spatial.cluster <- as.numeric(ModeloNimbleFinalBIS2TEC3$summary[375:667, 2])
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "pink", "green"))
+```

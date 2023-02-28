@@ -1,0 +1,217 @@
+\documentclass[12pt,oneside]{book} %a4paper
+\usepackage{graphicx}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{here}
+\usepackage{lmodern}
+\usepackage{color} %Introducido
+\definecolor{gray97}{gray}{.97}
+\definecolor{gray75}{gray}{.75}
+\definecolor{gray45}{gray}{.45}
+\usepackage[T1]{fontenc}
+\usepackage{amsfonts,amsmath,amsthm,amssymb}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{afterpage} %Introducido
+\usepackage[hyphens]{url} %Introducido
+\usepackage[hidelinks]{hyperref} %Introducido
+\usepackage{enumerate}
+\usepackage{footnote}
+\usepackage{fancyhdr}
+\usepackage{cancel}
+\usepackage{parskip} %Introducido. Sangria
+\usepackage[usenames,dvipsnames,svgnames,table]{xcolor} %Introducido
+\usepackage{listings} %Introducido. Código R
+\usepackage{multirow}
+\usepackage{latexsym}
+\usepackage{tabularx}
+\usepackage[natbibapa]{apacite} %Introducido. Sara
+\usepackage{setspace} %Espaciado
+%\newtheorem{theorem}{Theorem}
+%\newtheorem{proposition}[theorem]{Proposition}
+%\newtheorem{corollary}[theorem]{Corollary}
+%\newtheorem{lemma}[theorem]{Lemma}
+%\newtheorem{definition}[theorem]{Definition}
+%\newtheorem{remark}[theorem]{Remark}
+%\newtheorem{example}[theorem]{Example}
+%\newtheorem{ejemplo}[theorem]{Ejemplo}
+%\newtheorem{ejemplos}[theorem]{Ejemplos}
+%\newtheorem{teorema}[theorem]{Teorema}
+%\newtheorem{proposicion}[theorem]{Proposici\'on}
+%\newtheorem{corolario}[theorem]{Corolario}
+%\newtheorem{lema}[theorem]{Lema}
+%\newtheorem{definicion}[theorem]{Definici\'on}
+%\newtheorem{nota}[theorem]{Nota}
+\newcommand{\norm}[1]{\mbox{$\| #1 \|$}}
+
+\pagestyle{fancy} %Estudiar fancy
+\textheight=21cm %Altura del cuerpo central
+\textwidth=17cm %Anchura del texto
+\topmargin=1cm
+\oddsidemargin=0cm %Denota el margen izquierdo de una pagina impar
+\parindent=0mm
+\pagestyle{plain}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%
+% La siguiente instrucción pone el curso automáticamente%
+%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\global\let\date\relax
+\newcounter{unomenos}
+\setcounter{unomenos}{\number\year}
+\addtocounter{unomenos}{-2}
+\stepcounter{unomenos}
+\gdef\@date{Curso \arabic{unomenos}/\number\year}
+
+\begin{document}
+\renewcommand{\contentsname}{Índice}
+\renewcommand{\tablename}{Tabla}
+\begin{titlepage}
+\begin{center}
+
+\vspace*{-1in}
+\begin{figure}[H]
+\begin{center}
+\includegraphics[width=5cm]{Escut}
+\end{center}
+\end{figure}
+
+\vspace*{0.25in}
+\begin{Huge}
+Trabajo Fin de Máster - \@date
+\end{Huge}
+
+\vspace*{0.2in}
+\begin{Huge}
+\textbf{Modelos de Clusterización en Transcriptómica Espacial} \\
+\end{Huge}
+
+\vspace*{0.2in}
+\begin{Large}
+Autor: \\
+{\bf \sc Luis Requeni Zamora} \\
+\end{Large}
+
+\vspace*{0.2in}
+\begin{Large}
+Tutores: \\
+{\bf Álvaro Briz Redón}  \\
+{\bf Franscisco José Santonja Gómez}
+\end{Large}
+
+\vspace*{0.2in}
+\rule{110mm}{0.1mm}\\
+\hspace{-5cm}
+\begin{minipage}[t]{.45\textwidth}
+\raggedleft
+\begin{figure}[H]
+\includegraphics[width=15cm]{LogoFac}
+\end{figure}
+\end{minipage}
+\hfill
+\noindent
+\begin{minipage}[t]{.45\textwidth}
+\raggedleft
+\vspace{2cm}
+\hspace{-1cm}
+
+\begin{Large}
+Máster en Bioestadística\\
+\end{Large}
+\end{minipage}
+\end{center}
+\end{titlepage}
+
+
+
+\tableofcontents
+
+\chapter{Introducción}
+\section{Concepto de Transcriptómica Espacial}
+Entender cómo las células interactúan y se comunican entre sí en distintos contextos comprende una de las principales vias de trabajo de muchos investigadores y científicos en este Siglo XXI. Los avances en esta rama suponen desde hace tiempo implicaciones importantes en el desarrollo de enfermedades y en la identificación de nuevas terapias, principalmente en el estudio de enfermedades relacionadas con células cancerosas que interactúan con su entorno y su tratamiento de manera más efectiva. La estadística participa cada vez con más frecuencia en este tipo de trabajos y las investigaciones en este campo responden frecuentemente al nombre de la transcriptómica espacial. 
+
+La transcriptómica espacial es una técnica de análisis molecular que permite estudiar la expresión genética en células y tejidos en su contexto espacial, es decir, identificar qué genes están activos en cada región de un tejido o célula. Esta técnica utiliza tecnologías de secuenciación de alto rendimiento y herramientas de análisis bioinformático para obtener información detallada sobre la expresión genética en un nivel espacial. Se trata así de una disciplina emergente que permite la visualización y el análisis genético en un tejido o célula específica mediante la generación de mapas de expresión que posibilitan una comprensión detallada de la distribución espacial de la actividad genética.
+
+Una de las técnicas clave utilizadas en la transcriptómica espacial es la secuenciación de ARN de una sola célula (\textit{scRNA-seq}), que permite la identificación de los transcritos expresados en células individuales en un tejido o muestra. Además, otras técnicas de secuenciación espacial, como \textit{FISH} (hibridación \textit{in situ} fluorescente) y la secuenciación de ARN \textit{in situ} (\textit{RNA-seq}), también se utilizan para mapear la expresión genética a nivel espacial.
+
+\newpage
+
+Existen numerosas bases de datos públicas que se utilizan para analizar los datos de transcriptómica espacial. Las más frecuentes recogen la expresión genética en tejidos del cuerpo humano u otros animales y son espacialmente habituales en el estudio del cerebro. Estas bases de datos contienen información de expresión genética de diferentes tejidos y células y permiten la comparación y el análisis de los datos de transcriptómica espacial. \\
+
+
+\subsection{Técnicas de Análisis de Datos}
+La transcriptómica espacial genera grandes cantidades de datos complejos, y por lo tanto, el análisis de datos es una parte fundamental en la investigación. A continuación, se describen algunas de las técnicas más comunes utilizadas para el análisis de datos en la transcriptómica espacial:
+
+\begin{itemize}
+\item
+\textbf{Agrupación de células según su expresión genética}: Permite identificar grupos de células con patrones de expresión genética similares. Esta técnica se utiliza para identificar subpoblaciones de células con características específicas, como la presencia de ciertos marcadores o la activación de ciertos procesos biológicos. La agrupación de células se puede realizar mediante algoritmos de \textit{clustering}, como \textit{k-means} o \textit{hierarchical clustering}.
+\item
+\textbf{Identificación de patrones de expresión}: Consiste en localizar genes que se expresan de manera similar en diferentes células o tejidos. Así, permite visualizar genes que están regulados por los mismos procesos biológicos o que tienen funciones similares. La identificación de patrones de expresión utiliza técnicas de análisis de componentes principales (PCA) o análisis de correlación.
+\item
+\textbf{Visualización de datos}: La visualización de datos representa la expresión genética de las células en forma gráfica. Esta técnica se utiliza para explorar los patrones de expresión en diferentes células o tejidos, identificar subpoblaciones de células y visualizar la distribución de células según su expresión genética. Algunas técnicas de visualización comunes en transcriptómica espacial incluyen la proyección de datos en dos o tres dimensiones mediante técnicas de reducción de dimensionalidad como \textit{t-SNE} o \textit{UMAP}, y la creación de mapas de expresión genética en tejidos mediante técnicas de imagen como \textit{FISH} o \textit{in situ sequencing}. \\
+\end{itemize}
+
+\subsection{Aplicaciones de la Transcriptómica Espacial}
+Al analizar la expresión genética en un contexto espacial, la transcriptómica tiene una amplia variedad de aplicaciones en el campo de la biología molecular:
+
+\newpage
+
+\begin{itemize}
+\item
+\textbf{Identificación de biomarcadores}: Identificar genes específicos que se expresan en ciertos tejidos o células, permite la identificación de biomarcadores específicos para una enfermedad o estado fisiológico. Estos biomarcadores pueden tener aplicaciones en la detección temprana de enfermedades, la selección de terapias personalizadas y la monitorización del progreso del tratamiento.
+\item
+\textbf{Estudio de la diferenciación celular}: La transcriptómica espacial también se puede utilizar para estudiar la diferenciación celular en diferentes tejidos y órganos. Al analizar la expresión genética en diferentes etapas de la diferenciación celular, se pueden identificar los genes que están regulados durante este proceso y, por lo tanto, comprender mejor los mecanismos subyacentes de la diferenciación celular.
+\item
+\textbf{Comprensión de la patogénesis de enfermedades}: Analizar la expresión genética en diferentes células y tejidos durante la progresión de una enfermedad puede proporcionar información valiosa sobre los mecanismos moleculares que subyacen en la patogénesis de la enfermedad, así como identificar nuevos objetivos terapéuticos.
+\item
+\textbf{Descubrimiento de nuevos genes y vías moleculares}: La transcriptómica espacial también puede ayudar a descubrir nuevos genes y vías moleculares que se expresan en células y tejidos específicos. Esto puede llevar a una mejor comprensión de los procesos biológicos y al descubrimiento de nuevas dianas terapéuticas. \\ \\
+\end{itemize}
+
+
+\section{Transcriptómica Espacial y Bioestadística}
+La bioestadística es una rama de la estadística que se aplica a la biología y la medicina para analizar y comprender los datos que se generan en estas disciplinas. Esta área de la estadística se enfoca en el diseño y análisis de estudios experimentales y observacionales, así como en la interpretación de resultados y la toma de decisiones basadas en datos.
+
+La identificación de genes diferencialmente expresados es uno de los principales objetivos del análisis de datos de transcriptómica espacial. La bioestadística es fundamental para este proceso ya que proporciona los métodos necesarios para comparar los niveles de expresión genética entre diferentes muestras y condiciones. Para identificar genes diferencialmente expresados, se utilizan pruebas estadísticas que comparan los niveles de expresión de los genes entre diferentes grupos de muestras, como células normales y células tumorales.
+
+\newpage
+
+Igualmente, la localización de patrones de expresión es otro aspecto relevante del análisis de datos de transcriptómica espacial. Los patrones de expresión son útiles para entender las funciones biológicas de los genes y las vías metabólicas involucradas en los procesos biológicos. La bioestadística se utiliza en el análisis de patrones de expresión a través de métodos de agrupamiento o clustering, que identifican grupos de genes con patrones de expresión similares. Los métodos de clustering se basan en técnicas de aprendizaje automático que utilizan medidas de similitud para agrupar genes según sus patrones de expresión.
+
+Hay varios ejemplos de cómo la bioestadística se ha utilizado en la transcriptómica espacial para identificar patrones de expresión y genes diferencialmente expresados en diferentes tipos de tejidos y células. A continuación, se presentan algunos concretos:
+
+\begin{itemize}
+\item
+\textbf{Análisis de datos de tumores}: Buscar genes implicados en la progresión del cáncer y desarrollar marcadores moleculares para la clasificación de subtipos de tumores. Por ejemplo, en un estudio publicado en Nature en 2020, los investigadores analizaron los patrones de expresión genética en tumores de mama para identificar genes diferencialmente expresados entre diferentes subtipos de tumores. Utilizando técnicas estadísticas de agrupamiento y análisis de enriquecimiento funcional, los investigadores identificaron varios genes implicados en la progresión del cáncer y en la resistencia a la terapia.
+\item
+\textbf{Identificación de genes implicados en el desarrollo embrionario}: En un estudio publicado en Cell en 2018, se utilizó la transcriptómica espacial para analizar los patrones de expresión genética en embriones de ratón en diferentes etapas del desarrollo. Mediante el empleo de técnicas similares a las destacadas en el punto anterior, los investigadores identificaron varios genes implicados en la diferenciación celular y en la formación de órganos y tejidos.
+\item
+\textbf{Identificación de patrones de expresión en el cerebro}: La transcriptómica espacial también se ha utilizado en el análisis de tejidos cerebrales para identificar patrones de expresión implicados en diferentes procesos cognitivos y neurológicos. En un estudio publicado en Nature Neuroscience en 2021, los investigadores utilizaron la transcriptómica espacial para analizar los patrones de expresión genética en diferentes regiones del cerebro humano e identificaron varios genes implicados en la neurogénesis y en la función sináptica. \\ \\
+\end{itemize}
+
+\section{Objetivo del Estudio}
+
+
+
+\chapter{Modelos de Mixturas}
+
+\chapter{Estadística Espacial}
+
+\chapter{Análisis de Resultados}
+
+\chapter{Conclusión}
+
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Referencias}
+\setlength{\bibsep}{18pt}
+\bibliographystyle{apacite}
+\bibliography{biblio}
+
+\chapter*{Anexos}
+\addcontentsline{toc}{chapter}{Anexos}
+\end{document} 
+
+
+
+
