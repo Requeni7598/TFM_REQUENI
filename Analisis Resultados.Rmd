@@ -1,0 +1,886 @@
+---                                                 
+title: 'Analisis Resultados'    
+author: "Luis Requeni Zamora"
+date: "01/06/2023"
+output: 
+   html_document: default
+   pdf_document: default
+geometry: margin=1in
+fontsize: 10pt
+documentclass: article
+---
+
+```{r Librerias, include=FALSE}
+library(ape)
+library(BayesSpace)
+library(caret)
+library(chemometrics)
+library(cluster)
+library(dbscan)
+library(ggplot2)
+library(label.switching)
+library(nimble)
+library(mclust)
+library(mvtnorm)
+library(MCMCvis)
+library(rgdal)
+library(rgeos)
+library(rjags)
+library(rstan)
+library(R2jags)
+library(scater)
+library(scran)
+library(scuttle)
+library(sf)
+library(SingleCellExperiment)
+library(SummarizedExperiment)
+library(sp)
+library(spatialDE)
+library(spdep)
+library(tidyr)
+library(tripack)
+```
+
+
+
+# INTRODUCCIÓN
+
+```{r INTRODUCCION (1), echo=F, eval=T}
+melanoma <- getRDS(dataset = "2018_thrane_melanoma", sample = "ST_mel1_rep2")
+melanoma_int_colData <- melanoma@int_colData # Informacion PCA
+melanoma_int_colData_reducedDims <- as.data.frame(melanoma_int_colData@listData$reducedDims)
+datos <- melanoma_int_colData_reducedDims
+datosPCA <- datos
+```
+
+```{r INTRODUCCION (2), echo=T, eval=T}
+datos2 <- read.table(file = "ST_mel1_rep2_counts.tsv", 
+                     sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+
+x <- substr(colnames(datos2), 1, 3)
+x <- as.numeric(gsub("x", "", gsub("X", "", x)))
+y <- substr(colnames(datos2), 4, 6)
+y <- as.numeric(gsub("x", "", gsub("X", "", y)))
+
+coordenadas <- cbind(y, x)
+spatialpoint <- SpatialPoints(coordenadas)
+spatialpointdf <- SpatialPointsDataFrame(spatialpoint, datos)
+```
+
+\newpage
+
+
+
+# GENES ALTAMENTE VARIABLES
+
+```{r GENES ALTAMENTE VARIABLES (1), echo=T, eval=F}
+load("melanoma_spatialpolygon.rda")
+
+coords <- coordinates(melanoma_spatialpolygon)
+IDs <- row.names(as(melanoma_spatialpolygon, "data.frame"))
+Vecinos <- tri2nb(coords, row.names = IDs)
+Vecinos_List <- nb2WB(Vecinos)
+
+Resultados <- data.frame(gen = NULL, p_valor = NULL)
+for(i in 1:16148){
+  print(i)
+  a <- moran.test(as.numeric(datos2[i, ]), nb2listw(Vecinos))
+  Resultados <- rbind(Resultados, c(i, a$p.value, a$estimate[1]))
+}
+colnames(Resultados) <- c("Gen", "P-Valor", "Indice")
+save(Resultados, file = "ResultadosMoran_Polygons.rda")
+```
+
+```{r GENES ALTAMENTE VARIABLES (2), echo=T, eval=T}
+load("ResultadosMoran_Polygons.rda")
+ResultadosMoran_Polygons <- Resultados
+```
+
+```{r GENES ALTAMENTE VARIABLES (3), echo=T, eval=T}
+ResultadosMoran_Polygons2 <- ResultadosMoran_Polygons[order(ResultadosMoran_Polygons$`P-Valor`), ]
+DatosMoran_Polygons2 <- datos2[ResultadosMoran_Polygons2$Gen[1:16148], ]
+topMoranPolygons <- rownames(DatosMoran_Polygons2)
+
+ResultadosMoran_Polygons2$Gen <- topMoranPolygons
+head(ResultadosMoran_Polygons2)
+tail(ResultadosMoran_Polygons2)
+```
+
+\newpage
+
+```{r GENES ALTAMENTE VARIABLES (4), echo=T, eval=T, fig.height=2.5, fig.width=3.5, fig.align='center'}
+textcol <- "black"
+colors <- c("red")
+Valor1 <- t(datos2[topMoranPolygons[1], ])
+Valor2 <- t(datos2[topMoranPolygons[2], ])
+Valor3 <- t(datos2[topMoranPolygons[3], ])
+
+Base1 <- data.frame(x, y, Valor1)
+Base2 <- data.frame(x, y, Valor2)
+Base3 <- data.frame(x, y, Valor3)
+
+
+
+par(mfrow=c(1, 3))
+
+ggplot(Base1, aes(x = y, y = x, fill = Valor1)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = topMoranPolygons[1])) +
+       scale_fill_gradient2(low = "white", mid = "white", high = "orange", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+
+ggplot(Base2, aes(x = y, y = x, fill = Valor2)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = topMoranPolygons[2])) +
+       scale_fill_gradient2(low = "white", mid = "white", high = "orange", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+
+ggplot(Base3, aes(x = y, y = x, fill = Valor3)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = topMoranPolygons[3])) +
+       scale_fill_gradient2(low = "white", mid = "white", high = "orange", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+```
+
+\newpage
+
+
+
+# CALCULO ACP
+
+```{r CALCULO ACP (1), echo=T, eval=T}
+sce <- SingleCellExperiment(as.matrix(datos2))
+sce@assays@data@listData$counts <- as.matrix(unlist(sce@assays@data@listData),
+                                             nrow = 16148)
+sce@assays@data@listData[["counts"]] <- sce@assays@data@listData[[1]]
+```
+
+```{r CALCULO ACP (2), echo=T, eval=T}
+sce <- logNormCounts(sce)
+dec <- modelGeneVar(sce, assay.type = "logcounts")
+top <- getTopHVGs(dec, n = 2000)
+datosPCA <- runPCA(sce, ncomponents = 7, exprs_values = "logcounts", 
+                   subset_row = top)
+datosPCA <- as.data.frame(datosPCA@int_colData@listData[["reducedDims"]]@listData[["PCA"]])
+```
+
+```{r CALCULO ACP (3), echo=T, eval=T}
+head(as.data.frame(t(datos2))[, c(1, 16148)])
+head(datosPCA)
+```
+
+\newpage
+
+
+
+# VECINDADES
+
+```{r VECINDADES (1), echo=T, eval=T}
+load("melanoma_spatialpolygon.rda")
+
+# Vecinos Basados En Contigüedad
+# Un unico punto
+Vecinos1 <- poly2nb(melanoma_spatialpolygon, queen = T)
+nbInfo1 <- nb2WB(Vecinos1)
+# Mas de un punto
+Vecinos2 <- poly2nb(melanoma_spatialpolygon, queen = F)
+nbInfo2 <- nb2WB(Vecinos2)
+
+
+# Vecinos Basados En Grafos
+coords <- coordinates(melanoma_spatialpolygon)
+IDs <- row.names(as(melanoma_spatialpolygon, "data.frame"))
+# Triangulación de Delaunay
+Vecinos3 <- tri2nb(coords, row.names = IDs)
+nbInfo3 <- nb2WB(Vecinos3)
+# Esfera de Influencias
+Vecinos4 <- graph2nb(soi.graph(Vecinos3, coords), row.names = IDs)
+nbInfo4 <- nb2WB(Vecinos4)  
+# Vecinos de Gabriel
+Vecinos5 <- graph2nb(gabrielneigh(coords, nnmult = 4), row.names = IDs, sym = T)
+nbInfo5 <- nb2WB(Vecinos5)
+# Vecinos Relativos
+Vecinos6 <- graph2nb(relativeneigh(coords, nnmult = 4), row.names = IDs, sym = T)
+nbInfo6 <- nb2WB(Vecinos6)
+
+
+# Vecinos Basados En Distancias
+# Vecino más próximo
+Vecinos7 <- knn2nb(knearneigh(coords, k = 1), sym = T)
+nbInfo7 <- nb2WB(Vecinos7)
+# 2 Vecinos más próximos
+Vecinos8 <- knn2nb(knearneigh(coords, k = 2), sym = T)
+nbInfo8 <- nb2WB(Vecinos8)
+# 4 Vecinos más próximos
+Vecinos9 <- knn2nb(knearneigh(coords, k = 4), sym = T)
+nbInfo9 <- nb2WB(Vecinos9)
+```
+
+\newpage
+
+```{r VECINDADES (2), echo=T, eval=T}
+y <- datosPCA
+Modelo_Ejercicio <- nimbleCode(
+  {
+    for(k in 1:4){
+      sigma[k] ~ dgamma(1, 1)
+      tautau[k] <- 1 / sigma[k]^2
+    }
+    for(k in 1:4){
+      s[1:293, k] ~ dcar_normal(adj[1:L], weights[1:L], num[1:293], tautau[k], zero_mean = 1)  
+    }
+    
+    for(i in 1:293)
+    {
+      y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7, i])
+      wi_tau[1:7, 1:7, i] <- w[i]*tau[1:7, 1:7]
+      w[i] ~ dgamma(2, 2)
+      z[i] ~ dcat(omega[1:4, i])
+      for(k in 1:4){
+        alpha[i, k] ~ dnorm(0, 100)
+        omega[k, i] <- Phi[k, i]/sum(Phi[1:4, i])
+        log(Phi[k, i]) <- alpha[i, k] + s[i, k]
+      }
+    }
+    for (h in 1:4) 
+    {
+      mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+    }
+    tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+  }
+)
+
+Iniciales_Ejercicio <- function()
+{
+  list(tau = diag(1,7),
+       z = sample(c(1, 2, 3, 4), 293, replace = T),
+       mus = matrix(rep(0, 7*4), ncol = 4),
+       omega = matrix(rep(c(1/4, 1/4, 1/4, 1/4), 293), ncol = 293),
+       w = rep(1, 293),
+       alpha = matrix(rep(log(0.25), 293*4), nrow = 293),
+       sigma = rep(50, 4),
+       s = matrix(rep(0, 293*4), nrow = 293))
+}
+
+Parametros_Ejercicio <- c("mus", "z", "tau", "w", "s","sigma", 
+                          "tautau", "omega", "Phi", "alpha")
+
+nimbleOptions(showCompilerOutput = F)
+```
+
+\newpage
+
+```{r VECINDADES (3), echo=T, eval=F}
+ModeloNimbleVecindad1 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo1$adj), 
+                                                     adj = nbInfo1$adj, 
+                                                     weights = nbInfo1$weights, 
+                                                     num = nbInfo1$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindad2 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo2$adj), 
+                                                     adj = nbInfo2$adj, 
+                                                     weights = nbInfo2$weights, 
+                                                     num = nbInfo2$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindad3 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo3$adj), 
+                                                     adj = nbInfo3$adj, 
+                                                     weights = nbInfo3$weights, 
+                                                     num = nbInfo3$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindad4 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo4$adj), 
+                                                     adj = nbInfo4$adj, 
+                                                     weights = nbInfo4$weights, 
+                                                     num = nbInfo4$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+
+
+ModeloNimbleVecindad5 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo5$adj), 
+                                                     adj = nbInfo5$adj, 
+                                                     weights = nbInfo5$weights, 
+                                                     num = nbInfo5$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindad6 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo6$adj), 
+                                                     adj = nbInfo6$adj, 
+                                                     weights = nbInfo6$weights, 
+                                                     num = nbInfo6$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindad7 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo7$adj), 
+                                                     adj = nbInfo7$adj, 
+                                                     weights = nbInfo7$weights, 
+                                                     num = nbInfo7$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindad8 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo8$adj), 
+                                                     adj = nbInfo8$adj, 
+                                                     weights = nbInfo8$weights, 
+                                                     num = nbInfo8$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindad9 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                    constants = list(mu_0 = rep(0, 7),
+                                                     wish_V = diag(1, 7),
+                                                     tau_0 = diag(0.01, 7), 
+                                                     L = length(nbInfo9$adj), 
+                                                     adj = nbInfo9$adj, 
+                                                     weights = nbInfo9$weights, 
+                                                     num = nbInfo9$num),
+                                    inits = Iniciales_Ejercicio,
+                                    monitors = Parametros_Ejercicio, 
+                                    thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                    summary = TRUE, WAIC = TRUE)
+```
+
+```{r VECINDADES (4), echo=F, eval=T}
+load("ModeloNimbleVecindad1.rda")
+load("ModeloNimbleVecindad2.rda")
+load("ModeloNimbleVecindad3.rda")
+load("ModeloNimbleVecindad4.rda")
+load("ModeloNimbleVecindad5.rda")
+load("ModeloNimbleVecindad6.rda")
+load("ModeloNimbleVecindad7.rda")
+load("ModeloNimbleVecindad8.rda")
+load("ModeloNimbleVecindad9.rda")
+```
+
+```{r VECIDANDES (5), echo=T, eval=T}
+ModeloNimbleVecindad1$WAIC$WAIC
+ModeloNimbleVecindad2$WAIC$WAIC
+ModeloNimbleVecindad3$WAIC$WAIC
+ModeloNimbleVecindad4$WAIC$WAIC
+ModeloNimbleVecindad5$WAIC$WAIC
+ModeloNimbleVecindad6$WAIC$WAIC
+ModeloNimbleVecindad7$WAIC$WAIC
+ModeloNimbleVecindad8$WAIC$WAIC
+ModeloNimbleVecindad9$WAIC$WAIC
+```
+
+```{r VECINDADES (6), echo=T, eval=T}
+Vecinos10 <- nblag_cumul(nblag(Vecinos3, 2))
+nbInfo10 <- nb2WB(Vecinos10)
+Vecinos11 <- nblag_cumul(nblag(Vecinos3, 3))
+nbInfo11 <- nb2WB(Vecinos11)
+```
+
+```{r VECINDADES (7), echo=T, eval=F}
+ModeloNimbleVecindadOrden2 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                         constants = list(mu_0 = rep(0, 7),
+                                                          wish_V = diag(1, 7),
+                                                          tau_0 = diag(0.01, 7), 
+                                                          L = length(nbInfo10$adj), 
+                                                          adj = nbInfo10$adj, 
+                                                          weights = nbInfo10$weights, 
+                                                          num = nbInfo10$num),
+                                         inits = Iniciales_Ejercicio,
+                                         monitors = Parametros_Ejercicio, 
+                                         thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                         summary = TRUE, WAIC = TRUE)
+
+ModeloNimbleVecindadOrden3 <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                         constants = list(mu_0 = rep(0, 7),
+                                                          wish_V = diag(1, 7),
+                                                          tau_0 = diag(0.01, 7), 
+                                                          L = length(nbInfo11$adj), 
+                                                          adj = nbInfo11$adj, 
+                                                          weights = nbInfo11$weights, 
+                                                          num = nbInfo11$num),
+                                         inits = Iniciales_Ejercicio,
+                                         monitors = Parametros_Ejercicio, 
+                                         thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                         summary = TRUE, WAIC = TRUE)
+```
+
+```{r VECINDADES (8), echo=F, eval=T}
+load("ModeloNimbleVecindadOrden2.rda")
+load("ModeloNimbleVecindadOrden3.rda")
+```
+
+```{r VECIDANDES (9), echo=T, eval=T}
+ModeloNimbleVecindad3$WAIC$WAIC
+ModeloNimbleVecindadOrden2$WAIC$WAIC
+ModeloNimbleVecindadOrden3$WAIC$WAIC
+```
+
+\newpage
+
+
+
+# CLUSTERS
+
+```{r CLUSTERS (1), echo=T, eval=T}
+y <- datosPCA
+Modelo_Ejercicio <- nimbleCode(
+  {
+    for(k in 1:K){
+      sigma[k] ~ dgamma(1, 1)
+      tautau[k] <- 1 / sigma[k]^2
+    }
+    for(k in 1:K){
+      s[1:293, k] ~ dcar_normal(adj[1:L], weights[1:L], num[1:293], tautau[k], zero_mean = 1)  
+    }
+    
+    for(i in 1:293)
+    {
+      y[i, 1:7] ~ dmnorm(mus[1:7, z[i]], wi_tau[1:7, 1:7, i])
+      wi_tau[1:7, 1:7, i] <- w[i]*tau[1:7, 1:7]
+      w[i] ~ dgamma(2, 2)
+      z[i] ~ dcat(omega[1:K, i])
+      for(k in 1:K){
+        alpha[i, k] ~ dnorm(0, 100)
+        omega[k, i] <- Phi[k, i]/sum(Phi[1:K, i])
+        log(Phi[k, i]) <- alpha[i, k] + s[i, k]
+      }
+    }
+    for (h in 1:K) 
+    {
+      mus[1:7, h] ~ dmnorm(mu_0[1:7], tau_0[1:7, 1:7])
+    }
+    tau[1:7, 1:7] ~ dwish(wish_V[1:7, 1:7], 8)
+  }
+)
+
+Iniciales_Ejercicio <- function()
+{
+  list(tau = diag(1,7),
+       z = sample(c(1:K), 293, replace = T),
+       mus = matrix(rep(0, 7*K), ncol = K),
+       omega = matrix(rep(c(rep(1/K, K)), 293), ncol = 293),
+       w = rep(1, 293),
+       alpha = matrix(rep(log(1/K), 293*K), nrow = 293),
+       sigma = rep(50, K),
+       s = matrix(rep(0, 293*K), nrow = 293))
+}
+
+Parametros_Ejercicio <- c("mus", "z", "tau", "w", "s","sigma", 
+                          "tautau", "omega", "Phi", "alpha")
+
+nimbleOptions(showCompilerOutput = F)
+```
+
+\newpage
+
+```{r CLUSTERS (2), echo=T, eval=F}
+for(K in 3:9){
+  print(K)
+  ModeloNimbleVecindad <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                     constants = list(mu_0 = rep(0, 7),
+                                                      wish_V = diag(1, 7),
+                                                      tau_0 = diag(0.01, 7), 
+                                                      L = length(nbInfo10$adj), 
+                                                      adj = nbInfo10$adj, 
+                                                      weights = nbInfo10$weights,
+                                                      K = K,
+                                                      num = nbInfo10$num),
+                                      inits = Iniciales_Ejercicio,
+                                      monitors = Parametros_Ejercicio, 
+                                      thin = 10, niter = 20000, nburnin = 10000, nchains = 1, 
+                                      summary = TRUE, WAIC = TRUE)
+  assign(paste0("ModeloNimbleCluster", K), ModeloNimbleVecindad)  
+}
+```
+
+```{r CLUSTERS (3), echo=F, eval=T}
+load("ModeloNimbleCluster3.rda")
+load("ModeloNimbleCluster4.rda")
+load("ModeloNimbleCluster5.rda")
+load("ModeloNimbleCluster6.rda")
+load("ModeloNimbleCluster7.rda")
+load("ModeloNimbleCluster8.rda")
+load("ModeloNimbleCluster9.rda")
+```
+
+```{r CLUSTERS (4), echo=T, eval=T}
+ModeloNimbleCluster3$WAIC$WAIC
+ModeloNimbleCluster4$WAIC$WAIC
+ModeloNimbleCluster5$WAIC$WAIC
+ModeloNimbleCluster6$WAIC$WAIC
+ModeloNimbleCluster7$WAIC$WAIC
+ModeloNimbleCluster8$WAIC$WAIC
+ModeloNimbleCluster9$WAIC$WAIC
+```
+
+\newpage
+
+
+
+# MODELO FINAL
+
+```{r MODELO FINAL (1), echo=T, eval=F}
+K = 4
+ModeloNimbleFinal <- nimbleMCMC(Modelo_Ejercicio, data = list(y = y), 
+                                constants = list(mu_0 = rep(0, 7),
+                                                 wish_V = diag(1, 7),
+                                                 tau_0 = diag(0.01, 7), 
+                                                 L = length(nbInfo10$adj), 
+                                                 adj = nbInfo10$adj, 
+                                                 weights = nbInfo10$weights,
+                                                 K = K,
+                                                 num = nbInfo10$num),
+                                inits = Iniciales_Ejercicio,
+                                monitors = Parametros_Ejercicio, 
+                                thin = 10, niter = 100000, nburnin = 50000, nchains = 1, 
+                                summary = TRUE, WAIC = TRUE)
+}
+```
+
+```{r MODELO FINAL (2), echo=F, eval=T}
+load("ModeloNimbleFinal.rda")
+```
+
++ **Clasificación Original**
+
+```{r MODELO FINAL (3), echo=T, eval=T, fig.width=2.5, fig.height=3.5, fig.align='center'}
+load("ClasificacionMelanomaZhao.rda")
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "blue", "pink", "green"))
+```
+
++ **Clasificación Modelo**
+
+```{r MODELO FINAL (4), echo=T, eval=T, fig.width=2.5, fig.height=3.5, fig.align='center'}
+zs <- ModeloNimbleFinal$samples[, grep("z", colnames(ModeloNimbleFinal$samples))]
+clasif <- apply(zs, 2, function(j) as.numeric(names(sort(table(j), decreasing = T))[1]))
+ClasificacionMelanomaZhao$spatial.cluster <- clasif
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "pink", "green", "blue"))
+```
+
+
+```{r MODELO FINAL (5), echo=T, eval=T, fig.height=2.5, fig.width=3.5, fig.align='center', results='hide'}
+load("ClasificacionMelanomaZhao.rda")
+BayesSpace <- ClasificacionMelanomaZhao$spatial.cluster
+table(BayesSpace)
+
+zs <- ModeloNimbleFinal$samples[, grep("z",colnames(ModeloNimbleFinal$samples))]
+Nosotros <- apply(zs, 2, function(j) as.numeric(names(sort(table(j), decreasing = T))[1]))
+table(Nosotros)
+```
+
+```{r MODELO FINAL (6), echo=T, eval=T}
+Nosotros[Nosotros == 2] <- 30
+Nosotros[Nosotros == 3] <- 40
+Nosotros[Nosotros == 4] <- 20
+Nosotros[Nosotros == 30] <- 3
+Nosotros[Nosotros == 40] <- 4
+Nosotros[Nosotros == 20] <- 2
+```
+
+```{r MODELO FINAL (7), echo=T, eval=T}
+table(BayesSpace)
+table(Nosotros)
+names(which(BayesSpace != Nosotros))
+```
+
+```{r MODELO FINAL (8), echo=T, eval=T}
+zs <- ModeloNimbleFinal$samples[, names(which(BayesSpace != Nosotros))]
+resultados <- apply(zs, 2, function(j) table(j))
+resultados
+```
+
+```{r MODELO FINAL (9), echo=T, eval=T, fig.height=2.5, fig.width=3.5, fig.align='center', warning=F}
+datos2 <- read.table(file = "ST_mel1_rep2_counts.tsv", 
+                     sep = '\t', header = TRUE)
+rownames(datos2) <- datos2[, 1]
+datos2 <- datos2[, -1]
+
+x <- substr(colnames(datos2), 1, 3)
+x <- as.numeric(gsub("x", "", gsub("X", "", x)))
+y <- substr(colnames(datos2), 4, 6)
+y <- as.numeric(gsub("x", "", gsub("X", "", y)))
+
+textcol <- "black"
+colors <- c("red")
+Base <- data.frame(x, y, Nosotros)
+
+a <- names(which(BayesSpace != Nosotros))
+a <- as.numeric(substr(a, 3, nchar(a)-1))
+frames <- data.frame(Var1 = y[a], Var2 = x[a])
+
+ggplot(Base, aes(x = y, y = x, fill = as.factor(Nosotros))) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = "Cluster")) +
+       scale_fill_manual(values = c("red", "blue", "pink", "green")) +
+       geom_rect(data = frames, aes(x = Var1, y = Var2), linewidth = 2, fill = NA, colour = "black",
+                 xmin = frames$Var1 - 0.5, xmax = frames$Var1 + 0.5, ymin = frames$Var2 - 0.5, ymax = frames$Var2 + 0.5) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+```
+
+```{r MODELO FINAL (10), echo=T, eval=T, fig.height=2.5, fig.width=3.5, fig.align='center'}
+# HCLUST
+HCLUST1 <- hclust(dist(t(datos2)))
+HCLUST1 <- cutree(HCLUST1, k = 4)
+
+ClasificacionMelanomaZhao$spatial.cluster <- HCLUST1
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "green", "pink"))
+
+
+# AGNES
+AGNES1 <- agnes(t(datos2))
+AGNES1 <- cutree(AGNES1, k = 4)
+
+ClasificacionMelanomaZhao$spatial.cluster <- AGNES1
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "green", "pink"))
+
+
+# DIANA
+DIANA1 <- diana(t(datos2))
+DIANA1 <- cutree(DIANA1, k = 4)
+
+ClasificacionMelanomaZhao$spatial.cluster <- DIANA1
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "red", "green", "pink"))
+
+
+# KMEANS
+KMEANS1 <- kmeans(t(datos2), centers = 4)
+
+ClasificacionMelanomaZhao$spatial.cluster <- KMEANS1$cluster
+clusterPlot(ClasificacionMelanomaZhao, palette = c("green", "red", "blue", "pink"))
+
+
+# PAM
+PAM1 <- pam(t(datos2), k = 4)
+
+ClasificacionMelanomaZhao$spatial.cluster <- PAM1$cluster
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "green", "pink", "red"))
+
+
+# CLARA
+CLARA1 <- clara(t(datos2), k = 4)
+
+ClasificacionMelanomaZhao$spatial.cluster <- CLARA1$cluster
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "green", "red", "pink"))
+```
+
+```{r MODELO FINAL (11), echo=T, eval=T}
+load("ModeloNimbleCluster5.rda")
+load("ModeloNimbleCluster7.rda")
+load("ModeloNimbleCluster9.rda")
+```
+
+```{r MODELO FINAL (12), echo=T, eval=T, , fig.height=2.5, fig.width=3.5, fig.align='center'}
+zs <- ModeloNimbleCluster5$samples[, grep("z", colnames(ModeloNimbleCluster5$samples))]
+clasif <- apply(zs, 2, function(j) as.numeric(names(sort(table(j), decreasing = T))[1]))
+ClasificacionMelanomaZhao$spatial.cluster <- clasif
+clusterPlot(ClasificacionMelanomaZhao, palette = c("red", "pink", "blue", "brown", "green"))
+
+zs <- ModeloNimbleCluster7$samples[, grep("z", colnames(ModeloNimbleCluster7$samples))]
+clasif <- apply(zs, 2, function(j) as.numeric(names(sort(table(j), decreasing = T))[1]))
+ClasificacionMelanomaZhao$spatial.cluster <- clasif
+clusterPlot(ClasificacionMelanomaZhao, palette = c("blue", "brown", "red", "steelblue", 
+                                                   "green", "orange", "pink"))
+
+zs <- ModeloNimbleCluster9$samples[, grep("z", colnames(ModeloNimbleCluster9$samples))]
+clasif <- apply(zs, 2, function(j) as.numeric(names(sort(table(j), decreasing = T))[1]))
+ClasificacionMelanomaZhao$spatial.cluster <- clasif
+clusterPlot(ClasificacionMelanomaZhao, palette = c("brown", "black", "blue", "green", "red", 
+                                                   "orange", "pink", "yellow", "steelblue"))
+```
+
+\newpage
+
+
+
+# OTRAS FUNCIONALIDADES
+
+```{r OTRAS FUNCIONALIDADES (1), echo=T, eval=T}
+Clasificaciones <- as.data.frame(ModeloNimbleFinal$samples[, 
+                   grep("z", colnames(ModeloNimbleFinal$samples))])
+
+Probabilidades <- matrix(nrow = 293, ncol = 293)
+for(i in 1:293){
+  for(j in 1:293){
+    Probabilidades[i, j] <- sum(Clasificaciones[, i] == Clasificaciones[, j])/5000
+  }
+}
+Valor <- c()
+for(i in 1:293){
+  Valor <- c(Valor, mean(Probabilidades[i, Vecinos3[[i]]]))
+}
+```
+
+```{r OTRAS FUNCIONALIDADES (2), echo=F, eval=T, fig.height=2.5, fig.width=3.5, fig.align='center'}
+textcol <- "black"
+colors <- c("red")
+Base <- data.frame(x, y, Valor)
+
+ggplot(Base, aes(x = y, y = x, fill = Valor)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = "Probabilidad Frontera")) +
+       scale_fill_gradient2(low = "black", mid = "black", high = "white", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+```
+
+
+```{r OTRAS FUNCIONALIDADES (3), echo=F, eval=T, fig.height=2.5, fig.width=3.5, fig.align='center'}
+Valor1 <- c()
+Valor2 <- c()
+Valor3 <- c()
+Valor4 <- c()
+for(i in 1:293){
+  Valor1 <- c(Valor1, sum(Clasificaciones[, i] == 1)/5000)
+  Valor2 <- c(Valor2, sum(Clasificaciones[, i] == 2)/5000)
+  Valor3 <- c(Valor3, sum(Clasificaciones[, i] == 3)/5000)
+  Valor4 <- c(Valor4, sum(Clasificaciones[, i] == 4)/5000)
+}
+
+Base1 <- data.frame(x, y, Valor1)
+Base2 <- data.frame(x, y, Valor2)
+Base3 <- data.frame(x, y, Valor3)
+Base4 <- data.frame(x, y, Valor4)
+
+
+par(mfrow=c(2, 2))
+
+ggplot(Base1, aes(x = y, y = x, fill = Valor1)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = "Probabilidad Cluster 1")) +
+       scale_fill_gradient2(low = "white", mid = "white", high = "red", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+
+ggplot(Base2, aes(x = y, y = x, fill = Valor2)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = "Probabilidad Cluster 2")) +
+       scale_fill_gradient2(low = "white", mid = "white", high = "blue", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+
+ggplot(Base3, aes(x = y, y = x, fill = Valor3)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = "Probabilidad Cluster 3")) +
+       scale_fill_gradient2(low = "white", mid = "white", high = "green", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+
+ggplot(Base4, aes(x = y, y = x, fill = Valor4)) +
+       geom_tile(colour = "grey", linewidth = 0.5) +
+       guides(fill = guide_legend(title = "Probabilidad Cluster 4")) +
+       scale_fill_gradient2(low = "white", mid = "white", high = "pink", midpoint = .02) +
+       theme_void(base_size = 10) +
+       theme(legend.position = "right", legend.direction = "vertical",
+             legend.title = element_text(colour = textcol),
+             legend.text = element_text(colour = textcol, size = 7, face = "bold"),
+             plot.background = element_blank(),
+             panel.border = element_blank(),
+             plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+             plot.title = element_text(colour = textcol, hjust = 0, size = 14, face = "bold"))
+```
+
+
+
+
+
+
